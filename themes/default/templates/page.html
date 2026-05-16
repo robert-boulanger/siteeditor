@@ -14,7 +14,12 @@
 
       {% if block.type == "hero" %}
         <section class="block hero" style="text-align: {{ block.align | default(value="center") }}">
-          {% if block.image %}<img class="hero__image" src="{{ block.image }}" alt="">{% endif %}
+          {% if block.image %}
+            <figure class="hero__figure">
+              <img class="hero__image" src="{{ block.image }}" alt="{{ block.image_caption | default(value="") }}">
+              {% if block.image_caption %}<figcaption>{{ block.image_caption }}</figcaption>{% endif %}
+            </figure>
+          {% endif %}
           <h1 class="hero__headline">{{ block.headline }}</h1>
           {% if block.sub %}<p class="hero__sub">{{ block.sub }}</p>{% endif %}
         </section>
@@ -34,7 +39,10 @@
         <section class="block gallery gallery--{{ block.layout | default(value="grid") }}"
                  style="--gallery-cols: {{ block.columns | default(value=3) }}">
           {% for img in block.images %}
-            <img src="{{ img }}" alt="">
+            <figure>
+              <img src="{{ img.src }}" alt="{{ img.caption | default(value="") }}">
+              {% if img.caption %}<figcaption>{{ img.caption }}</figcaption>{% endif %}
+            </figure>
           {% endfor %}
         </section>
 
@@ -56,7 +64,12 @@
             <div class="columns__col">
               {% for inner in col %}
                 {% if inner.type == "text" %}<div class="prose">{{ inner.content_html | safe }}</div>{% endif %}
-                {% if inner.type == "image" %}<img src="{{ inner.image }}" alt="">{% endif %}
+                {% if inner.type == "image" %}
+                  <figure>
+                    <img src="{{ inner.image }}" alt="{{ inner.caption | default(value="") }}">
+                    {% if inner.caption %}<figcaption>{{ inner.caption }}</figcaption>{% endif %}
+                  </figure>
+                {% endif %}
                 {% if inner.type == "cta" %}<a class="cta__btn" href="{{ inner.href }}">{{ inner.text }}</a>{% endif %}
                 {% if inner.type == "quote" %}<blockquote>{{ inner.text }}</blockquote>{% endif %}
               {% endfor %}

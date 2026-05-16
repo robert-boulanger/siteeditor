@@ -1,5 +1,52 @@
+import { useState } from "react";
+import { Image as ImageIcon, Folder } from "lucide-react";
 import type { Block, ColumnsInner } from "../../store";
+import { useStore } from "../../store";
 import { ProseEditor } from "../ProseEditor";
+import { AssetPicker } from "../AssetPicker";
+import { useAssetDrop, filterPaths } from "../../lib/dropManager";
+
+type AssetFieldProps = {
+  value: string;
+  onChange: (v: string) => void;
+  accept?: "image" | "video" | "any";
+  placeholder?: string;
+};
+
+function AssetField({ value, onChange, accept = "image", placeholder }: AssetFieldProps) {
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const importAsset = useStore((s) => s.importAsset);
+  const dropRef = useAssetDrop<HTMLDivElement>(async (paths) => {
+    const accepted = filterPaths(paths, accept);
+    if (accepted.length === 0) return;
+    const rel = await importAsset(accepted[0]);
+    onChange(`/assets/${rel}`);
+  });
+  return (
+    <>
+      <div className="asset-input-row" ref={dropRef}>
+        <input
+          value={value}
+          placeholder={placeholder ?? "/assets/…"}
+          onChange={(e) => onChange(e.currentTarget.value)}
+        />
+        <button
+          type="button" className="asset-pick-btn"
+          title="Aus Assets wählen" onClick={() => setPickerOpen(true)}
+        >
+          {accept === "image" ? <ImageIcon size={16} /> : <Folder size={16} />}
+        </button>
+      </div>
+      {pickerOpen && (
+        <AssetPicker
+          mode="single" accept={accept}
+          onCancel={() => setPickerOpen(false)}
+          onPick={(paths) => { onChange(paths[0]); setPickerOpen(false); }}
+        />
+      )}
+    </>
+  );
+}
 
 /**
  * Pro Block-Typ ein simples Formular. Felder folgen den im default-Theme
@@ -51,8 +98,19 @@ function HeroForm({ block, onChange }: Props<Extract<Block, { type: "hero" }>>) 
         </select>
       </Field>
       <Field label="Bild-Pfad (optional)">
-        <input value={block.image ?? ""} onChange={(e) => onChange({ ...block, image: e.currentTarget.value || undefined })} />
+        <AssetField
+          value={block.image ?? ""}
+          onChange={(v) => onChange({ ...block, image: v || undefined })}
+        />
       </Field>
+      {block.image && (
+        <Field label="Bildunterschrift (optional)">
+          <input
+            value={block.image_caption ?? ""}
+            onChange={(e) => onChange({ ...block, image_caption: e.currentTarget.value || undefined })}
+          />
+        </Field>
+      )}
     </div>
   );
 }
@@ -78,7 +136,7 @@ function ImageForm({ block, onChange }: Props<Extract<Block, { type: "image" }>>
   return (
     <div className="block-form">
       <Field label="Bild-Pfad">
-        <input value={block.image} onChange={(e) => onChange({ ...block, image: e.currentTarget.value })} />
+        <AssetField value={block.image} onChange={(v) => onChange({ ...block, image: v })} />
       </Field>
       <Field label="Bildunterschrift">
         <input value={block.caption ?? ""} onChange={(e) => onChange({ ...block, caption: e.currentTarget.value || undefined })} />
@@ -95,9 +153,17 @@ function ImageForm({ block, onChange }: Props<Extract<Block, { type: "image" }>>
 }
 
 function GalleryForm({ block, onChange }: Props<Extract<Block, { type: "gallery" }>>) {
-  const update = (idx: number, v: string) => {
-    const images = [...block.images];
-    images[idx] = v;
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const importAsset = useStore((s) => s.importAsset);
+  const dropRef = useAssetDrop<HTMLDivElement>(async (paths) => {
+    const accepted = filterPaths(paths, "image");
+    if (accepted.length === 0) return;
+    const rels: string[] = [];
+    for (const p of accepted) rels.push(await importAsset(p));
+    onChange({ ...block, images: [...block.images, ...rels.map((r) => ({ src: `/assets/${r}` }))] });
+  });
+  const patch = (idx: number, p: Partial<{ src: string; caption: string }>) => {
+    const images = block.images.map((img, j) => j === idx ? { ...img, ...p, caption: p.caption === "" ? undefined : (p.caption ?? img.caption) } : img);
     onChange({ ...block, images });
   };
   return (
@@ -115,16 +181,36 @@ function GalleryForm({ block, onChange }: Props<Extract<Block, { type: "gallery"
           onChange={(e) => onChange({ ...block, columns: Number(e.currentTarget.value) })}
         />
       </Field>
-      <div className="block-subgroup">
-        <strong>Bilder</strong>
+      <div className="block-subgroup" ref={dropRef}>
+        <div className="row" style={{ justifyContent: "space-between" }}>
+          <strong>Bilder <span className="muted small">(Dateien hier ablegen erlaubt)</span></strong>
+          <button type="button" className="asset-pick-btn" onClick={() => setPickerOpen(true)}>
+            <ImageIcon size={14} /> Aus Assets wählen
+          </button>
+        </div>
         {block.images.map((img, i) => (
-          <div key={i} className="row">
-            <input value={img} onChange={(e) => update(i, e.currentTarget.value)} />
-            <button type="button" onClick={() => onChange({ ...block, images: block.images.filter((_, j) => j !== i) })}>×</button>
+          <div key={i} className="gallery-image-row">
+            <div className="asset-input-row">
+              <input value={img.src} placeholder="/assets/…" onChange={(e) => patch(i, { src: e.currentTarget.value })} />
+              <button type="button" onClick={() => onChange({ ...block, images: block.images.filter((_, j) => j !== i) })}>×</button>
+            </div>
+            <input
+              className="gallery-caption"
+              placeholder="Bildunterschrift (optional)"
+              value={img.caption ?? ""}
+              onChange={(e) => patch(i, { caption: e.currentTarget.value })}
+            />
           </div>
         ))}
-        <button type="button" onClick={() => onChange({ ...block, images: [...block.images, ""] })}>+ Bild</button>
+        <button type="button" onClick={() => onChange({ ...block, images: [...block.images, { src: "" }] })}>+ Bild</button>
       </div>
+      {pickerOpen && (
+        <AssetPicker
+          mode="multi" accept="image"
+          onCancel={() => setPickerOpen(false)}
+          onPick={(paths) => { onChange({ ...block, images: [...block.images, ...paths.map((src) => ({ src }))] }); setPickerOpen(false); }}
+        />
+      )}
     </div>
   );
 }
@@ -133,7 +219,7 @@ function VideoForm({ block, onChange }: Props<Extract<Block, { type: "video" }>>
   return (
     <div className="block-form">
       <Field label="Video-Pfad">
-        <input value={block.source} onChange={(e) => onChange({ ...block, source: e.currentTarget.value })} />
+        <AssetField value={block.source} accept="video" onChange={(v) => onChange({ ...block, source: v })} />
       </Field>
       <Field label="Bildunterschrift">
         <input value={block.caption ?? ""} onChange={(e) => onChange({ ...block, caption: e.currentTarget.value || undefined })} />
@@ -229,8 +315,14 @@ function ColumnsForm({ block, onChange }: Props<Extract<Block, { type: "columns"
                     <option value="quote">quote</option>
                   </select>
                   {inner.type === "image" && (
-                    <input placeholder="Bild-Pfad" value={inner.image}
-                      onChange={(e) => replaceInner({ ...inner, image: e.currentTarget.value })} />
+                    <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: "0.3rem" }}>
+                      <AssetField value={inner.image} onChange={(v) => replaceInner({ ...inner, image: v })} />
+                      <input
+                        placeholder="Bildunterschrift (optional)"
+                        value={inner.caption ?? ""}
+                        onChange={(e) => replaceInner({ ...inner, caption: e.currentTarget.value || undefined })}
+                      />
+                    </div>
                   )}
                   {inner.type === "cta" && (
                     <>

@@ -116,6 +116,15 @@ function App() {
         <div className="actions">
           <button onClick={pickBootstrapTarget} disabled={busy}>Beispielprojekt erzeugen</button>
           <button onClick={pickProjectFolder} disabled={busy}>Projekt öffnen…</button>
+          <button
+            className="save-btn"
+            onClick={handleSave}
+            disabled={!dirty || busy}
+            title={dirty ? "Ungespeicherte Änderungen speichern" : "Nichts zu speichern"}
+          >
+            {dirty && <span className="dirty-dot" aria-hidden>●</span>}
+            Speichern
+          </button>
           <button onClick={buildAndOpen} disabled={busy || !project}>Build &amp; Preview</button>
         </div>
       </header>
@@ -177,10 +186,6 @@ function App() {
             <article>
               <div className="page-header-row">
                 <h2>{draftFm.title}</h2>
-                <div className="body-actions">
-                  {dirty && <span className="dirty-dot" title="Ungespeicherte Änderungen">●</span>}
-                  <button onClick={handleSave} disabled={!dirty || busy}>Speichern</button>
-                </div>
               </div>
 
               <details className="page-meta" open>

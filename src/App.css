@@ -33,7 +33,10 @@ body {
   border-bottom: 1px solid var(--border);
 }
 .app-header h1 { font-size: 1.1rem; margin: 0; }
-.app-header .actions { display: flex; gap: 0.5rem; }
+.app-header .actions { display: flex; gap: 0.5rem; align-items: center; }
+.app-header .save-btn { display: inline-flex; align-items: center; gap: 0.3rem; }
+.app-header .save-btn:not(:disabled) { background: var(--accent); color: #fff; border-color: var(--accent); }
+.app-header .save-btn .dirty-dot { color: #fff; font-size: 0.9rem; line-height: 1; }
 .app-header button {
   padding: 0.4rem 0.8rem;
   border: 1px solid var(--border);
@@ -325,6 +328,78 @@ body {
 .modal-actions button { padding: 0.4rem 0.9rem; border: 1px solid var(--border); border-radius: 3px; background: #fff; cursor: pointer; }
 .modal-actions button[type="submit"] { background: var(--accent); color: #fff; border-color: var(--accent); }
 .modal .error { color: #c00; font-size: 0.85rem; margin: 0; }
+
+/* Asset-Picker */
+.modal.asset-picker { min-width: 560px; max-width: 760px; max-height: 80vh; }
+.asset-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 0.6rem; max-height: 50vh; overflow-y: auto;
+  padding: 0.3rem; border: 1px solid var(--border); border-radius: 4px;
+}
+.asset-tile {
+  position: relative; display: flex; flex-direction: column;
+  border: 2px solid transparent; border-radius: 4px; cursor: pointer;
+  background: #fafafa; overflow: hidden;
+}
+.asset-tile:hover { background: #f0f0f0; }
+.asset-tile.selected { border-color: var(--accent); background: #eef6ff; }
+.asset-thumb {
+  width: 100%; aspect-ratio: 1; display: flex; align-items: center; justify-content: center;
+  background: #fff; border-bottom: 1px solid var(--border); overflow: hidden;
+}
+.asset-thumb img { max-width: 100%; max-height: 100%; object-fit: contain; }
+.asset-icon { font-size: 2rem; opacity: 0.6; }
+.asset-meta { padding: 0.3rem 0.4rem; font-size: 0.75rem; }
+.asset-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.asset-size { color: #888; font-size: 0.7rem; }
+.asset-delete {
+  position: absolute; top: 2px; right: 2px;
+  width: 22px; height: 22px; border-radius: 50%; border: none;
+  background: rgba(0,0,0,0.55); color: #fff; cursor: pointer; line-height: 1;
+  display: none;
+}
+.asset-tile:hover .asset-delete { display: block; }
+.asset-pick-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  padding: 0.25rem 0.5rem; border: 1px solid var(--border); background: #fff;
+  border-radius: 3px; cursor: pointer; font-size: 0.85rem;
+}
+.asset-pick-btn:hover { border-color: var(--accent); color: var(--accent); }
+.asset-input-row { display: flex; gap: 0.3rem; align-items: center; }
+.asset-input-row input { flex: 1; }
+.gallery-image-row { display: flex; flex-direction: column; gap: 0.25rem; padding: 0.3rem 0; border-bottom: 1px dashed var(--border); }
+.gallery-image-row:last-child { border-bottom: none; }
+.gallery-caption { font-size: 0.85rem; }
+
+/* Drop-Target für Finder-Drags */
+.is-drop-target { outline: 2px dashed var(--accent); outline-offset: -2px; background: rgba(0, 119, 204, 0.06); }
+
+/* Resizable Image im Editor */
+.resizable-image { line-height: 0; cursor: grab; }
+.resizable-image:active { cursor: grabbing; }
+.resizable-image.is-selected .resizable-image-inner { outline: 2px solid var(--accent); outline-offset: 2px; }
+.resize-handle {
+  position: absolute; right: -4px; bottom: -4px;
+  width: 14px; height: 14px; background: var(--accent);
+  border: 2px solid #fff; border-radius: 2px; box-shadow: 0 0 0 1px var(--accent);
+  z-index: 5;
+}
+.image-align-toolbar {
+  position: absolute; top: -32px; left: 50%; transform: translateX(-50%);
+  display: inline-flex; gap: 2px; background: #fff;
+  border: 1px solid var(--border); border-radius: 4px; padding: 2px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.15); z-index: 6;
+  line-height: 1;
+}
+.image-align-toolbar button {
+  border: none; background: transparent; padding: 2px 6px; cursor: pointer;
+  font-size: 0.9rem; border-radius: 2px;
+}
+.image-align-toolbar button:hover { background: #f0f0f0; }
+.image-align-toolbar button.is-active { background: var(--accent); color: #fff; }
+.image-align-toolbar .sep { display: inline-block; width: 1px; background: var(--border); margin: 0 2px; align-self: stretch; }
+/* Float-Bilder ihren Wrap erlauben */
+.prose-editor-surface::after { content: ""; display: block; clear: both; }
 
 /* Icon-Buttons (lucide-react svg) brauchen flex-Zentrierung */
 .page-actions button, .block-actions button, .prose-toolbar button, .add-page {

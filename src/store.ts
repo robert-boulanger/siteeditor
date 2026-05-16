@@ -33,18 +33,20 @@ export type PageDoc = {
 /** Block-Katalog v1 — 8 Typen. Felder sind absichtlich locker getypt,
  *  weil die Templates `default()`-Werte tolerieren. */
 export type Block =
-  | { type: "hero"; headline: string; sub?: string; align?: "left" | "center" | "right"; image?: string }
+  | { type: "hero"; headline: string; sub?: string; align?: "left" | "center" | "right"; image?: string; image_caption?: string }
   | { type: "text"; content: string; style?: string }
   | { type: "image"; image: string; caption?: string; width?: "normal" | "wide" | "full" }
-  | { type: "gallery"; images: string[]; layout?: "grid" | "masonry"; columns?: number }
+  | { type: "gallery"; images: GalleryImage[]; layout?: "grid" | "masonry"; columns?: number }
   | { type: "video"; source: string; autoplay?: boolean; caption?: string }
   | { type: "cta"; text: string; href: string; style?: "primary" | "secondary" }
   | { type: "columns"; columns: ColumnsInner[][] }
   | { type: "quote"; text: string; author?: string; source?: string };
 
+export type GalleryImage = { src: string; caption?: string };
+
 export type ColumnsInner =
   | { type: "text"; content: string }
-  | { type: "image"; image: string }
+  | { type: "image"; image: string; caption?: string }
   | { type: "cta"; text: string; href: string }
   | { type: "quote"; text: string };
 
@@ -57,13 +59,21 @@ export function newBlock(type: Block["type"]): Block {
     case "hero": return { type, headline: "Neue Überschrift", align: "center" };
     case "text": return { type, content: "" };
     case "image": return { type, image: "" };
-    case "gallery": return { type, images: [], layout: "grid", columns: 3 };
+    case "gallery": return { type, images: [], layout: "grid", columns: 3 } as Block;
     case "video": return { type, source: "" };
     case "cta": return { type, text: "Mehr erfahren", href: "/" };
     case "columns": return { type, columns: [[{ type: "text", content: "" }], [{ type: "text", content: "" }]] };
     case "quote": return { type, text: "" };
   }
 }
+
+export type AssetInfo = {
+  path: string;
+  name: string;
+  size: number;
+  mime: string;
+  mtime: number;
+};
 
 type BuildResult = {
   pages_rendered: number;
@@ -83,6 +93,10 @@ type Store = {
   createPage: (slug: string, frontmatter: PageFrontmatter, body?: string) => Promise<void>;
   renamePage: (oldSlug: string, newSlug: string) => Promise<void>;
   deletePage: (slug: string) => Promise<void>;
+  listAssets: () => Promise<AssetInfo[]>;
+  importAsset: (sourcePath: string) => Promise<string>;
+  deleteAsset: (path: string) => Promise<void>;
+  readAssetDataUrl: (path: string) => Promise<string>;
   build: () => Promise<BuildResult>;
   setStatus: (s: string) => void;
 };
@@ -206,6 +220,22 @@ export const useStore = create<Store>((set, get) => ({
     } finally {
       set({ busy: false });
     }
+  },
+
+  listAssets: async () => {
+    return await invoke<AssetInfo[]>("list_assets");
+  },
+
+  importAsset: async (sourcePath: string) => {
+    return await invoke<string>("import_asset", { source: sourcePath });
+  },
+
+  deleteAsset: async (path: string) => {
+    await invoke("delete_asset", { path });
+  },
+
+  readAssetDataUrl: async (path: string) => {
+    return await invoke<string>("read_asset_data_url", { path });
   },
 
   build: async () => {

@@ -72,6 +72,16 @@ pub struct MenuConfig {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct AssetInfo {
+    /// relativer Pfad unter `assets/`, mit `/` als Trenner
+    pub path: String,
+    pub name: String,
+    pub size: u64,
+    pub mime: String,
+    pub mtime: u64,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct PageDoc {
     pub slug: String,
     pub frontmatter: PageFrontmatter,
@@ -252,6 +262,99 @@ impl Project {
         Ok(())
     }
 
+    /// Listet alle Dateien in `<root>/assets/` (rekursiv, relative Pfade mit
+    /// `/`-Trennern). Ordner selbst tauchen nicht in der Liste auf.
+    pub fn list_assets(&self) -> Result<Vec<AssetInfo>, ProjectError> {
+        let dir = self.assets_dir();
+        if !dir.exists() {
+            return Ok(Vec::new());
+        }
+        let mut out = Vec::new();
+        for entry in walkdir::WalkDir::new(&dir).min_depth(1) {
+            let entry = entry?;
+            if !entry.file_type().is_file() {
+                continue;
+            }
+            let abs = Utf8Path::from_path(entry.path()).ok_or(ProjectError::NonUtf8Path)?;
+            let rel = abs
+                .strip_prefix(&dir)
+                .map_err(|_| ProjectError::NonUtf8Path)?
+                .as_str()
+                .replace('\\', "/");
+            let meta = entry.metadata()?;
+            let mtime = meta
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            let name = abs.file_name().unwrap_or("").to_string();
+            out.push(AssetInfo {
+                path: rel,
+                name,
+                size: meta.len(),
+                mime: guess_mime(abs.as_str()).to_string(),
+                mtime,
+            });
+        }
+        out.sort_by(|a, b| a.path.cmp(&b.path));
+        Ok(out)
+    }
+
+    /// Kopiert eine externe Datei nach `<root>/assets/`. Bei Namens-Kollision
+    /// wird `name-1.ext`, `name-2.ext`, … vergeben. Gibt den relativen Pfad
+    /// (mit `/`) zurück.
+    pub fn import_asset(&self, source: impl AsRef<Utf8Path>) -> Result<String, ProjectError> {
+        let source = source.as_ref();
+        if !source.is_file() {
+            return Err(ProjectError::InvalidPage {
+                path: source.to_string(),
+                reason: "quelle ist keine datei".into(),
+            });
+        }
+        let dir = self.assets_dir();
+        std::fs::create_dir_all(&dir)?;
+        let original_name = source.file_name().unwrap_or("asset");
+        let (stem, ext) = split_name(original_name);
+        let mut candidate = original_name.to_string();
+        let mut i: u32 = 1;
+        while dir.join(&candidate).exists() {
+            candidate = if ext.is_empty() {
+                format!("{stem}-{i}")
+            } else {
+                format!("{stem}-{i}.{ext}")
+            };
+            i += 1;
+        }
+        let target = dir.join(&candidate);
+        std::fs::copy(source, &target)?;
+        Ok(candidate)
+    }
+
+    /// Löscht eine Datei in `assets/`. Lehnt jeden Pfad ab, der ausserhalb
+    /// von `assets/` zeigen würde (`..`, absolut, Symlink-Escape).
+    pub fn delete_asset(&self, rel_path: &str) -> Result<(), ProjectError> {
+        if !is_safe_asset_path(rel_path) {
+            return Err(ProjectError::InvalidPage {
+                path: rel_path.to_string(),
+                reason: "unsicherer asset-pfad".into(),
+            });
+        }
+        let dir = self.assets_dir();
+        let target = dir.join(rel_path);
+        // canonicalize beider Pfade und prüfen, dass target unter dir liegt
+        let dir_canon = std::fs::canonicalize(&dir)?;
+        let target_canon = std::fs::canonicalize(&target)?;
+        if !target_canon.starts_with(&dir_canon) {
+            return Err(ProjectError::InvalidPage {
+                path: rel_path.to_string(),
+                reason: "pfad verlässt asset-verzeichnis".into(),
+            });
+        }
+        std::fs::remove_file(&target_canon)?;
+        Ok(())
+    }
+
     /// Löscht eine Page. Backups verbleiben unter `.siteeditor/backups/<slug>/`
     /// zur Wiederherstellung.
     pub fn delete_page(&self, slug: &str) -> Result<(), ProjectError> {
@@ -279,6 +382,54 @@ fn is_safe_slug(slug: &str) -> bool {
         && !slug.contains('\\')
         && !slug.contains("..")
         && !slug.starts_with('.')
+}
+
+fn is_safe_asset_path(p: &str) -> bool {
+    if p.is_empty() {
+        return false;
+    }
+    if p.starts_with('/') || p.starts_with('\\') {
+        return false;
+    }
+    // Windows-Laufwerksbuchstaben & UNC
+    if p.contains(':') {
+        return false;
+    }
+    for seg in p.split(['/', '\\']) {
+        if seg.is_empty() || seg == ".." || seg == "." {
+            return false;
+        }
+    }
+    true
+}
+
+fn split_name(name: &str) -> (String, String) {
+    match name.rsplit_once('.') {
+        Some((stem, ext)) if !stem.is_empty() => (stem.to_string(), ext.to_string()),
+        _ => (name.to_string(), String::new()),
+    }
+}
+
+fn guess_mime(path: &str) -> &'static str {
+    let ext = path.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase()).unwrap_or_default();
+    match ext.as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "svg" => "image/svg+xml",
+        "avif" => "image/avif",
+        "mp4" => "video/mp4",
+        "webm" => "video/webm",
+        "mov" => "video/quicktime",
+        "mp3" => "audio/mpeg",
+        "wav" => "audio/wav",
+        "ogg" => "audio/ogg",
+        "pdf" => "application/pdf",
+        "txt" | "md" => "text/plain",
+        "json" => "application/json",
+        _ => "application/octet-stream",
+    }
 }
 
 fn assemble_page(frontmatter: &str, body: &str) -> String {
@@ -517,6 +668,99 @@ mod tests {
         let (_tmp, project) = make_project_with_page("---\ntitle: T\n---\nbody\n");
         project.rename_page("index", "index").unwrap();
         assert!(project.pages_dir().join("index.md").exists());
+    }
+
+    // --- assets --------------------------------------------------------------
+
+    fn write_asset(project: &Project, rel: &str, content: &[u8]) {
+        let target = project.assets_dir().join(rel);
+        std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+        std::fs::write(target, content).unwrap();
+    }
+
+    #[test]
+    fn list_assets_returns_relative_paths_sorted() {
+        let (_tmp, project) = make_project_with_page("---\ntitle: T\n---\n\n");
+        write_asset(&project, "b.png", b"PNG");
+        write_asset(&project, "sub/a.jpg", b"JPG");
+        let assets = project.list_assets().unwrap();
+        let paths: Vec<_> = assets.iter().map(|a| a.path.clone()).collect();
+        assert_eq!(paths, vec!["b.png".to_string(), "sub/a.jpg".to_string()]);
+        let png = assets.iter().find(|a| a.path == "b.png").unwrap();
+        assert_eq!(png.mime, "image/png");
+        assert_eq!(png.size, 3);
+    }
+
+    #[test]
+    fn list_assets_empty_when_dir_missing() {
+        let (_tmp, project) = make_project_with_page("---\ntitle: T\n---\n\n");
+        assert!(project.list_assets().unwrap().is_empty());
+    }
+
+    #[test]
+    fn import_asset_copies_and_returns_name() {
+        let (_tmp, project) = make_project_with_page("---\ntitle: T\n---\n\n");
+        let src_dir = tempfile::tempdir().unwrap();
+        let src = src_dir.path().join("logo.png");
+        std::fs::write(&src, b"DATA").unwrap();
+        let rel = project.import_asset(Utf8Path::from_path(&src).unwrap()).unwrap();
+        assert_eq!(rel, "logo.png");
+        assert!(project.assets_dir().join("logo.png").exists());
+    }
+
+    #[test]
+    fn import_asset_renames_on_conflict() {
+        let (_tmp, project) = make_project_with_page("---\ntitle: T\n---\n\n");
+        write_asset(&project, "logo.png", b"OLD");
+        write_asset(&project, "logo-1.png", b"OLD1");
+        let src_dir = tempfile::tempdir().unwrap();
+        let src = src_dir.path().join("logo.png");
+        std::fs::write(&src, b"NEW").unwrap();
+        let rel = project.import_asset(Utf8Path::from_path(&src).unwrap()).unwrap();
+        assert_eq!(rel, "logo-2.png");
+        assert_eq!(std::fs::read(project.assets_dir().join("logo-2.png")).unwrap(), b"NEW");
+        assert_eq!(std::fs::read(project.assets_dir().join("logo.png")).unwrap(), b"OLD");
+    }
+
+    #[test]
+    fn import_asset_handles_no_extension() {
+        let (_tmp, project) = make_project_with_page("---\ntitle: T\n---\n\n");
+        write_asset(&project, "README", b"OLD");
+        let src_dir = tempfile::tempdir().unwrap();
+        let src = src_dir.path().join("README");
+        std::fs::write(&src, b"NEW").unwrap();
+        let rel = project.import_asset(Utf8Path::from_path(&src).unwrap()).unwrap();
+        assert_eq!(rel, "README-1");
+    }
+
+    #[test]
+    fn delete_asset_removes_file() {
+        let (_tmp, project) = make_project_with_page("---\ntitle: T\n---\n\n");
+        write_asset(&project, "logo.png", b"X");
+        project.delete_asset("logo.png").unwrap();
+        assert!(!project.assets_dir().join("logo.png").exists());
+    }
+
+    #[test]
+    fn delete_asset_rejects_escape() {
+        let (_tmp, project) = make_project_with_page("---\ntitle: T\n---\n\n");
+        for bad in ["../site.json", "../../etc/passwd", "/etc/passwd", "", "a/../b"] {
+            let err = project.delete_asset(bad).unwrap_err();
+            assert!(matches!(err, ProjectError::InvalidPage { .. }), "{bad} sollte abgelehnt werden");
+        }
+    }
+
+    #[test]
+    fn delete_asset_rejects_missing() {
+        let (_tmp, project) = make_project_with_page("---\ntitle: T\n---\n\n");
+        // assets-dir muss existieren, sonst schlägt canonicalize bereits am dir fehl
+        std::fs::create_dir_all(project.assets_dir()).unwrap();
+        let err = project.delete_asset("ghost.png").unwrap_err();
+        // entweder Io (canonicalize) oder InvalidPage — beide ok, file_not_found
+        match err {
+            ProjectError::Io(_) | ProjectError::InvalidPage { .. } => (),
+            other => panic!("unerwarteter Fehler: {other:?}"),
+        }
     }
 
     #[test]

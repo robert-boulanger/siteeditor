@@ -1,8 +1,12 @@
 import { useEditor, EditorContent, Editor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import { Markdown } from "tiptap-markdown";
-import { useEffect, useRef } from "react";
-import { Undo2, Redo2 } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Undo2, Redo2, Image as ImageIcon } from "lucide-react";
+import { ResizableImage } from "./ResizableImage";
+import { AssetPicker } from "./AssetPicker";
+import { useAssetDrop, filterPaths } from "../lib/dropManager";
+import { useStore } from "../store";
 
 type Props = {
   /** Initial-Markdown der gerade geladenen Page. Ändert sich, wenn der User die Page wechselt. */
@@ -26,8 +30,9 @@ export function ProseEditor({ value, onChange }: Props) {
   const editor = useEditor({
     extensions: [
       StarterKit,
+      ResizableImage.configure({ inline: false, allowBase64: false }),
       Markdown.configure({
-        html: false,
+        html: true,
         breaks: false,
         linkify: true,
         transformPastedText: true,
@@ -52,8 +57,26 @@ export function ProseEditor({ value, onChange }: Props) {
     lastEmitted.current = value;
   }, [value, editor]);
 
+  const importAsset = useStore((s) => s.importAsset);
+  const dropRef = useAssetDrop<HTMLDivElement>(async (paths, pos) => {
+    if (!editor) return;
+    const accepted = filterPaths(paths, "image");
+    if (accepted.length === 0) return;
+    const coords = editor.view.posAtCoords({ left: pos.x, top: pos.y });
+    const insertPos = coords?.pos ?? editor.state.selection.from;
+    let chain = editor.chain().focus().setTextSelection(insertPos);
+    for (const p of accepted) {
+      const rel = await importAsset(p);
+      chain = chain.insertContent({
+        type: "image",
+        attrs: { src: `/assets/${rel}`, alt: "", align: "inline" },
+      });
+    }
+    chain.run();
+  });
+
   return (
-    <div className="prose-editor">
+    <div className="prose-editor" ref={dropRef}>
       <Toolbar editor={editor} />
       <EditorContent editor={editor} className="prose-editor-surface" />
     </div>
@@ -61,6 +84,7 @@ export function ProseEditor({ value, onChange }: Props) {
 }
 
 function Toolbar({ editor }: { editor: Editor | null }) {
+  const [pickerOpen, setPickerOpen] = useState(false);
   if (!editor) return null;
   const btn = (active: boolean, onClick: () => void, label: string, title: string) => (
     <button
@@ -115,6 +139,27 @@ function Toolbar({ editor }: { editor: Editor | null }) {
       {btn(editor.isActive("blockquote"), () => editor.chain().focus().toggleBlockquote().run(), "❝", "Zitat")}
       {btn(editor.isActive("code"), () => editor.chain().focus().toggleCode().run(), "‹›", "Code (inline)")}
       {btn(editor.isActive("codeBlock"), () => editor.chain().focus().toggleCodeBlock().run(), "{ }", "Code-Block")}
+      <span className="sep" />
+      <button
+        type="button"
+        onMouseDown={(e) => { e.preventDefault(); setPickerOpen(true); }}
+        title="Bild einfügen"
+      >
+        <ImageIcon size={14} />
+      </button>
+      {pickerOpen && (
+        <AssetPicker
+          mode="single" accept="image"
+          onCancel={() => setPickerOpen(false)}
+          onPick={(paths) => {
+            setPickerOpen(false);
+            const src = paths[0];
+            if (src) editor.chain().focus().insertContent({
+              type: "image", attrs: { src, alt: "", align: "inline" },
+            }).run();
+          }}
+        />
+      )}
       <span className="sep" />
       <button
         type="button"

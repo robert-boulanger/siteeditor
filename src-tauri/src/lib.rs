@@ -2,7 +2,7 @@ mod bootstrap;
 mod preview;
 
 use camino::Utf8PathBuf;
-use projectfs::{PageFrontmatter, Project};
+use projectfs::{AssetInfo, PageFrontmatter, Project};
 use serde::{Deserialize, Serialize};
 use std::sync::{Mutex, OnceLock};
 use tauri::Manager;
@@ -175,6 +175,73 @@ fn list_page_summaries(project: &Project) -> Result<Vec<PageSummary>, String> {
 }
 
 #[tauri::command]
+fn list_assets(state: tauri::State<'_, AppState>) -> Result<Vec<AssetInfo>, String> {
+    let guard = state.project.lock().unwrap();
+    let project = guard.as_ref().ok_or_else(|| "no project open".to_string())?;
+    project.list_assets().map_err(to_str_err)
+}
+
+#[tauri::command]
+fn import_asset(
+    state: tauri::State<'_, AppState>,
+    source: String,
+) -> Result<String, String> {
+    let guard = state.project.lock().unwrap();
+    let project = guard.as_ref().ok_or_else(|| "no project open".to_string())?;
+    project
+        .import_asset(Utf8PathBuf::from(source))
+        .map_err(to_str_err)
+}
+
+#[tauri::command]
+fn delete_asset(
+    state: tauri::State<'_, AppState>,
+    path: String,
+) -> Result<(), String> {
+    let guard = state.project.lock().unwrap();
+    let project = guard.as_ref().ok_or_else(|| "no project open".to_string())?;
+    project.delete_asset(&path).map_err(to_str_err)
+}
+
+#[tauri::command]
+fn read_asset_data_url(
+    state: tauri::State<'_, AppState>,
+    path: String,
+) -> Result<String, String> {
+    let guard = state.project.lock().unwrap();
+    let project = guard.as_ref().ok_or_else(|| "no project open".to_string())?;
+    // Pfad-Sicherheit über delete_asset's Logik — read braucht eigene Validierung.
+    if path.is_empty() || path.contains("..") || path.starts_with('/') || path.contains(':') {
+        return Err("unsicherer asset-pfad".into());
+    }
+    let dir = project.assets_dir();
+    let target = dir.join(&path);
+    let dir_canon = std::fs::canonicalize(&dir).map_err(to_str_err)?;
+    let target_canon = std::fs::canonicalize(&target).map_err(to_str_err)?;
+    if !target_canon.starts_with(&dir_canon) {
+        return Err("pfad verlässt asset-verzeichnis".into());
+    }
+    let bytes = std::fs::read(&target_canon).map_err(to_str_err)?;
+    let mime = guess_mime_for(&path);
+    use base64::Engine;
+    let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+    Ok(format!("data:{mime};base64,{b64}"))
+}
+
+fn guess_mime_for(path: &str) -> &'static str {
+    let ext = path.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase()).unwrap_or_default();
+    match ext.as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "svg" => "image/svg+xml",
+        "avif" => "image/avif",
+        _ => "application/octet-stream",
+    }
+}
+
+#[tauri::command]
 fn build_site(state: tauri::State<'_, AppState>) -> Result<BuildResult, String> {
     let guard = state.project.lock().unwrap();
     let project = guard.as_ref().ok_or_else(|| "no project open".to_string())?;
@@ -240,6 +307,10 @@ pub fn run() {
             create_page,
             rename_page,
             delete_page,
+            list_assets,
+            import_asset,
+            delete_asset,
+            read_asset_data_url,
             build_site,
             preview_url,
             open_in_browser,
