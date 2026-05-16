@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="{{ site.language | default(value="en") }}">
+<head>
+  {% include "partials/head.html" %}
+</head>
+<body>
+  <header class="site-header">
+    <a class="site-title" href="/">{{ site.title }}</a>
+    {% include "partials/menu.html" %}
+  </header>
+
+  <main class="page">
+    {% for block in blocks %}
+
+      {% if block.type == "hero" %}
+        <section class="block hero" style="text-align: {{ block.align | default(value="center") }}">
+          {% if block.image %}<img class="hero__image" src="{{ block.image }}" alt="">{% endif %}
+          <h1 class="hero__headline">{{ block.headline }}</h1>
+          {% if block.sub %}<p class="hero__sub">{{ block.sub }}</p>{% endif %}
+        </section>
+
+      {% elif block.type == "text" %}
+        <section class="block prose prose--{{ block.style | default(value="default") }}">
+          {{ page.content_html | safe }}
+        </section>
+
+      {% elif block.type == "image" %}
+        <figure class="block image image--{{ block.width | default(value="normal") }}">
+          <img src="{{ block.image }}" alt="{{ block.caption | default(value="") }}">
+          {% if block.caption %}<figcaption>{{ block.caption }}</figcaption>{% endif %}
+        </figure>
+
+      {% elif block.type == "gallery" %}
+        <section class="block gallery gallery--{{ block.layout | default(value="grid") }}"
+                 style="--gallery-cols: {{ block.columns | default(value=3) }}">
+          {% for img in block.images %}
+            <img src="{{ img }}" alt="">
+          {% endfor %}
+        </section>
+
+      {% elif block.type == "video" %}
+        <figure class="block video">
+          <video src="{{ block.source }}" controls {% if block.autoplay %}autoplay muted{% endif %}></video>
+          {% if block.caption %}<figcaption>{{ block.caption }}</figcaption>{% endif %}
+        </figure>
+
+      {% elif block.type == "cta" %}
+        <p class="block cta">
+          <a class="cta__btn cta__btn--{{ block.style | default(value="primary") }}"
+             href="{{ block.href }}">{{ block.text }}</a>
+        </p>
+
+      {% elif block.type == "columns" %}
+        <section class="block columns columns--{{ block.columns | length }}">
+          {% for col in block.columns %}
+            <div class="columns__col">
+              {% for inner in col %}
+                {% if inner.type == "text" %}<div class="prose">{{ page.content_html | safe }}</div>{% endif %}
+                {% if inner.type == "image" %}<img src="{{ inner.image }}" alt="">{% endif %}
+                {% if inner.type == "cta" %}<a class="cta__btn" href="{{ inner.href }}">{{ inner.text }}</a>{% endif %}
+                {% if inner.type == "quote" %}<blockquote>{{ inner.text }}</blockquote>{% endif %}
+              {% endfor %}
+            </div>
+          {% endfor %}
+        </section>
+
+      {% elif block.type == "quote" %}
+        <blockquote class="block quote">
+          <p>{{ block.text }}</p>
+          {% if block.author %}<cite>— {{ block.author }}{% if block.source %}, <em>{{ block.source }}</em>{% endif %}</cite>{% endif %}
+        </blockquote>
+
+      {% endif %}
+
+    {% endfor %}
+  </main>
+
+  <footer class="site-footer">
+    <p>© {{ site.title }}</p>
+  </footer>
+</body>
+</html>

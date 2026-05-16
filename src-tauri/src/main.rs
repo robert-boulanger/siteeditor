@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    siteeditor_scaffold_lib::run()
+    siteeditor_lib::run()
 }

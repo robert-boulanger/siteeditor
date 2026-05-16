@@ -1,0 +1,21 @@
+{
+  "spec_version": "0.2",
+  "name": "default",
+  "display_name": "Default",
+  "version": "0.1.0",
+  "author": "siteeditor",
+  "description": "Schlichtes, neutrales Reference-Theme. Erfüllt THEME_SPEC v0.2 vollständig.",
+  "supported_blocks": [
+    "hero", "text", "image", "gallery", "video", "cta", "columns", "quote"
+  ],
+  "unsupported_blocks": [],
+  "css_variables": {
+    "--color-primary":   "#1a73e8",
+    "--color-bg":        "#ffffff",
+    "--color-text":      "#1a1a1a",
+    "--font-body":       "system-ui, -apple-system, sans-serif",
+    "--font-heading":    "system-ui, -apple-system, sans-serif",
+    "--radius":          "6px",
+    "--spacing-section": "4rem"
+  }
+}

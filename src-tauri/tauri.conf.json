@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "siteeditor-scaffold",
+  "productName": "siteeditor",
   "version": "0.1.0",
   "identifier": "com.siteeditor.app",
   "build": {
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "siteeditor-scaffold",
+        "title": "siteeditor",
         "width": 800,
         "height": 600
       }
