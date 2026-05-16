@@ -2,7 +2,7 @@ mod bootstrap;
 mod preview;
 
 use camino::Utf8PathBuf;
-use projectfs::{AssetInfo, PageFrontmatter, Project};
+use projectfs::{AssetInfo, PageFrontmatter, Project, ThemeInfo};
 use serde::{Deserialize, Serialize};
 use std::sync::{Mutex, OnceLock};
 use tauri::Manager;
@@ -20,6 +20,8 @@ struct PageSummary {
     title: String,
     visible: bool,
     template: Option<String>,
+    menu_order: Option<i32>,
+    favorite: bool,
 }
 
 #[derive(Serialize)]
@@ -77,6 +79,8 @@ fn open_project_inner(path: Utf8PathBuf) -> Result<OpenResult, String> {
             title: p.frontmatter.title,
             visible: p.frontmatter.visible,
             template: p.frontmatter.template,
+            menu_order: p.frontmatter.menu.order,
+            favorite: p.frontmatter.favorite,
         })
         .collect();
     Ok(OpenResult {
@@ -170,6 +174,8 @@ fn list_page_summaries(project: &Project) -> Result<Vec<PageSummary>, String> {
             title: p.frontmatter.title,
             visible: p.frontmatter.visible,
             template: p.frontmatter.template,
+            menu_order: p.frontmatter.menu.order,
+            favorite: p.frontmatter.favorite,
         })
         .collect())
 }
@@ -242,6 +248,76 @@ fn guess_mime_for(path: &str) -> &'static str {
 }
 
 #[tauri::command]
+fn set_favorite(
+    state: tauri::State<'_, AppState>,
+    slug: String,
+    favorite: bool,
+) -> Result<Vec<PageSummary>, String> {
+    let guard = state.project.lock().unwrap();
+    let project = guard.as_ref().ok_or_else(|| "no project open".to_string())?;
+    project.set_favorite(&slug, favorite).map_err(to_str_err)?;
+    list_page_summaries(project)
+}
+
+#[derive(Deserialize)]
+struct MovePageArgs {
+    slug: String,
+    #[serde(default)]
+    new_parent: Option<String>,
+    #[serde(default)]
+    new_order: Option<i32>,
+}
+
+#[tauri::command]
+fn move_page(
+    state: tauri::State<'_, AppState>,
+    args: MovePageArgs,
+) -> Result<Vec<PageSummary>, String> {
+    let guard = state.project.lock().unwrap();
+    let project = guard.as_ref().ok_or_else(|| "no project open".to_string())?;
+    project
+        .move_page(&args.slug, args.new_parent.as_deref(), args.new_order)
+        .map_err(to_str_err)?;
+    list_page_summaries(project)
+}
+
+#[tauri::command]
+fn list_themes(state: tauri::State<'_, AppState>) -> Result<Vec<ThemeInfo>, String> {
+    let guard = state.project.lock().unwrap();
+    let project = guard.as_ref().ok_or_else(|| "no project open".to_string())?;
+    project.list_installed_themes().map_err(to_str_err)
+}
+
+#[tauri::command]
+fn set_active_theme(
+    state: tauri::State<'_, AppState>,
+    slug: String,
+) -> Result<String, String> {
+    let mut guard = state.project.lock().unwrap();
+    let project = guard.as_mut().ok_or_else(|| "no project open".to_string())?;
+    project.set_active_theme(&slug).map_err(to_str_err)?;
+    Ok(project.manifest.active_theme.clone())
+}
+
+#[tauri::command]
+fn read_theme_css(state: tauri::State<'_, AppState>, slug: String) -> Result<String, String> {
+    let guard = state.project.lock().unwrap();
+    let project = guard.as_ref().ok_or_else(|| "no project open".to_string())?;
+    project.read_theme_css(&slug).map_err(to_str_err)
+}
+
+#[tauri::command]
+fn write_theme_css(
+    state: tauri::State<'_, AppState>,
+    slug: String,
+    content: String,
+) -> Result<(), String> {
+    let guard = state.project.lock().unwrap();
+    let project = guard.as_ref().ok_or_else(|| "no project open".to_string())?;
+    project.write_theme_css(&slug, &content).map_err(to_str_err)
+}
+
+#[tauri::command]
 fn build_site(state: tauri::State<'_, AppState>) -> Result<BuildResult, String> {
     let guard = state.project.lock().unwrap();
     let project = guard.as_ref().ok_or_else(|| "no project open".to_string())?;
@@ -308,10 +384,16 @@ pub fn run() {
             create_page,
             rename_page,
             delete_page,
+            move_page,
+            set_favorite,
             list_assets,
             import_asset,
             delete_asset,
             read_asset_data_url,
+            list_themes,
+            set_active_theme,
+            read_theme_css,
+            write_theme_css,
             build_site,
             preview_url,
             open_in_browser,

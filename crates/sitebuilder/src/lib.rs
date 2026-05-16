@@ -36,6 +36,8 @@ struct MenuItem {
     slug: String,
     url: String,
     order: i32,
+    #[serde(default)]
+    children: Vec<MenuItem>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -132,6 +134,9 @@ pub fn build_site(project: &Project) -> Result<BuildReport> {
 }
 
 fn add_templates(tera: &mut Tera, dir: &Utf8PathBuf, prefix: &str) -> Result<()> {
+    // Bulk-Variante: Tera löst Imports/Extends erst, wenn alle Templates
+    // registriert sind. So spielt die Walk-Reihenfolge keine Rolle.
+    let mut buffered: Vec<(String, String)> = Vec::new();
     for entry in walkdir::WalkDir::new(dir).min_depth(1) {
         let entry = entry?;
         let path = entry.path();
@@ -149,9 +154,11 @@ fn add_templates(tera: &mut Tera, dir: &Utf8PathBuf, prefix: &str) -> Result<()>
         };
         let raw = std::fs::read_to_string(path)
             .with_context(|| format!("read template {}", path.display()))?;
-        tera.add_raw_template(&name, &raw)
-            .with_context(|| format!("add template {name}"))?;
+        buffered.push((name, raw));
     }
+    let refs: Vec<(&str, &str)> = buffered.iter().map(|(n, c)| (n.as_str(), c.as_str())).collect();
+    tera.add_raw_templates(refs)
+        .context("add theme templates")?;
     Ok(())
 }
 
@@ -160,22 +167,86 @@ fn load_theme_manifest(theme_dir: &Utf8PathBuf) -> Result<theme_contract::ThemeM
     Ok(serde_json::from_str(&raw)?)
 }
 
+/// Baut einen Menü-Baum aus den (flach gelisteten) Pages. Eltern-Beziehung
+/// wird aus dem Slug-Pfad abgeleitet: `about/team` ist Kind von `about`.
+///
+/// `site.menu_order` ordnet ausschließlich die **Top-Level-Items**. Kinder
+/// werden pro Parent nach `menu.order` (dann nach Titel) sortiert.
+///
+/// Wenn die Parent-Page fehlt oder im Menü ausgeblendet ist, hängt der Knoten
+/// trotzdem an seinem nächsten *vorhandenen* Vorfahren im Menü; existiert
+/// keiner, wird er auf Root-Ebene gehängt (kein Eintrag wird unsichtbar).
 fn build_menu(pages: &[PageDoc], order: &[String]) -> Vec<MenuItem> {
-    let mut items: Vec<MenuItem> = pages
+    let visible: Vec<&PageDoc> = pages
         .iter()
         .filter(|p| p.frontmatter.visible && p.frontmatter.menu.show)
-        .map(|p| MenuItem {
-            title: p.frontmatter.title.clone(),
-            slug: p.slug.clone(),
-            url: page_url(&p.slug),
-            order: p.frontmatter.menu.order.unwrap_or(1000),
+        .collect();
+    let visible_slugs: std::collections::HashSet<&str> =
+        visible.iter().map(|p| p.slug.as_str()).collect();
+
+    // Map slug -> MenuItem (zunächst ohne Kinder)
+    let mut by_slug: BTreeMap<String, MenuItem> = visible
+        .iter()
+        .map(|p| {
+            (
+                p.slug.clone(),
+                MenuItem {
+                    title: p.frontmatter.title.clone(),
+                    slug: p.slug.clone(),
+                    url: page_url(&p.slug),
+                    order: p.frontmatter.menu.order.unwrap_or(1000),
+                    children: Vec::new(),
+                },
+            )
         })
         .collect();
 
-    // honour menu_order: items in order come first, in given order; rest sorted by their order field, then title
+    // Für jeden Slug: nächsten vorhandenen Vorfahren bestimmen.
+    let mut parent_of: BTreeMap<String, Option<String>> = BTreeMap::new();
+    for slug in by_slug.keys().cloned().collect::<Vec<_>>() {
+        parent_of.insert(slug.clone(), nearest_visible_ancestor(&slug, &visible_slugs));
+    }
+
+    // Bottom-up zusammenstecken: Knoten ohne Kinder werden zuerst in ihren
+    // Parent gehängt. BTreeMap-Iteration ist alphabetisch; wir gehen daher
+    // absteigend nach Tiefe, damit Kinder ihre Kinder bereits drin haben.
+    let mut slugs_by_depth: Vec<String> = by_slug.keys().cloned().collect();
+    slugs_by_depth.sort_by_key(|s| std::cmp::Reverse(s.matches('/').count()));
+
+    for slug in slugs_by_depth {
+        if let Some(Some(parent_slug)) = parent_of.get(&slug).cloned() {
+            // Knoten aus der Map entfernen und beim Parent einhängen.
+            if let Some(node) = by_slug.remove(&slug) {
+                if let Some(parent) = by_slug.get_mut(&parent_slug) {
+                    parent.children.push(node);
+                } else {
+                    // Parent wurde bereits verschoben — zurücklegen als Root-Fallback.
+                    by_slug.insert(slug, node);
+                }
+            }
+        }
+    }
+
+    // Was jetzt noch in by_slug liegt, sind Root-Items.
+    let mut roots: Vec<MenuItem> = by_slug.into_values().collect();
+
+    // Kinder pro Knoten rekursiv sortieren (nach order, dann title).
+    fn sort_children(item: &mut MenuItem) {
+        item.children.sort_by(|a, b| {
+            a.order.cmp(&b.order).then_with(|| a.title.cmp(&b.title))
+        });
+        for c in &mut item.children {
+            sort_children(c);
+        }
+    }
+    for r in &mut roots {
+        sort_children(r);
+    }
+
+    // Root sortieren: explizite menu_order zuerst, Rest nach order/title.
     let order_index: BTreeMap<&String, usize> =
         order.iter().enumerate().map(|(i, s)| (s, i)).collect();
-    items.sort_by(|a, b| {
+    roots.sort_by(|a, b| {
         let ai = order_index.get(&a.slug);
         let bi = order_index.get(&b.slug);
         match (ai, bi) {
@@ -185,7 +256,26 @@ fn build_menu(pages: &[PageDoc], order: &[String]) -> Vec<MenuItem> {
             (None, None) => a.order.cmp(&b.order).then_with(|| a.title.cmp(&b.title)),
         }
     });
-    items
+    roots
+}
+
+/// Sucht zum gegebenen Slug den nächsten *vorhandenen* Vorfahren im
+/// Menü-Slug-Set. Liefert `None` für Root-Items oder wenn kein Vorfahre
+/// im Menü ist (→ Knoten wird Root).
+fn nearest_visible_ancestor(
+    slug: &str,
+    visible: &std::collections::HashSet<&str>,
+) -> Option<String> {
+    let mut s: &str = slug;
+    while let Some(idx) = s.rfind('/') {
+        let parent = &slug[..idx];
+        s = parent;
+        if visible.contains(parent) {
+            return Some(parent.to_string());
+        }
+        // weiter hochlaufen
+    }
+    None
 }
 
 /// Walkt durch alle Blocks und ergänzt `content_html` für jeden `text`-Block
@@ -271,6 +361,10 @@ fn render_page(
 fn render_404(tera: &Tera, site: &SiteCtx, out_dir: &Utf8PathBuf) -> Result<()> {
     let mut ctx = TeraContext::new();
     ctx.insert("site", site);
+    ctx.insert(
+        "page",
+        &serde_json::json!({ "title": "404", "slug": "404" }),
+    );
     let html = tera.render("404.html", &ctx)?;
     std::fs::write(out_dir.join("404.html"), html)?;
     Ok(())
@@ -312,6 +406,7 @@ mod tests {
                 menu: MenuConfig { show: menu_show, order: menu_order },
                 blocks: vec![],
                 meta: Default::default(),
+                favorite: false,
             },
             body_markdown: String::new(),
         }
@@ -361,6 +456,53 @@ mod tests {
         let slugs: Vec<_> = items.iter().map(|i| i.slug.as_str()).collect();
         // beta(order=1) zuerst, dann alpha(order=5) vor zeta(order=5) alphabetisch
         assert_eq!(slugs, vec!["beta", "alpha", "zeta"]);
+    }
+
+    #[test]
+    fn build_menu_baut_baum_aus_pfad_slugs() {
+        let pages = vec![
+            page("about", "About", true, Some(10), true),
+            page("about/team", "Team", true, Some(2), true),
+            page("about/contact", "Contact", true, Some(1), true),
+            page("index", "Home", true, Some(1), true),
+        ];
+        let items = build_menu(&pages, &[]);
+        let root_slugs: Vec<_> = items.iter().map(|i| i.slug.as_str()).collect();
+        assert_eq!(root_slugs, vec!["index", "about"]);
+
+        let about = items.iter().find(|i| i.slug == "about").unwrap();
+        let child_slugs: Vec<_> = about.children.iter().map(|c| c.slug.as_str()).collect();
+        // Kinder nach order: contact (1) vor team (2)
+        assert_eq!(child_slugs, vec!["about/contact", "about/team"]);
+    }
+
+    #[test]
+    fn build_menu_haengt_an_naechsten_sichtbaren_vorfahren_wenn_parent_versteckt() {
+        // about ist versteckt (menu.show=false), aber about/team ist sichtbar
+        // → about/team rutscht auf Root, nicht verschwinden.
+        let pages = vec![
+            page("about", "About", true, None, false),       // im Menü nicht sichtbar
+            page("about/team", "Team", true, None, true),
+        ];
+        let items = build_menu(&pages, &[]);
+        let root_slugs: Vec<_> = items.iter().map(|i| i.slug.as_str()).collect();
+        assert_eq!(root_slugs, vec!["about/team"]);
+    }
+
+    #[test]
+    fn build_menu_dreistufige_hierarchie() {
+        let pages = vec![
+            page("a", "A", true, Some(1), true),
+            page("a/b", "B", true, Some(1), true),
+            page("a/b/c", "C", true, Some(1), true),
+        ];
+        let items = build_menu(&pages, &[]);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].slug, "a");
+        assert_eq!(items[0].children.len(), 1);
+        assert_eq!(items[0].children[0].slug, "a/b");
+        assert_eq!(items[0].children[0].children.len(), 1);
+        assert_eq!(items[0].children[0].children[0].slug, "a/b/c");
     }
 
     #[test]

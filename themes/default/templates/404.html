@@ -1,15 +1,23 @@
+{% import "partials/_menu_macros.html" as nav %}
 <!doctype html>
 <html lang="{{ site.language | default(value="en") }}">
 <head>
-  <meta charset="utf-8">
-  <title>404 — {{ site.title }}</title>
-  <link rel="stylesheet" href="/styles/main.css">
+  {% include "partials/head.html" %}
 </head>
 <body>
+  <header class="site-header">
+    <a class="site-title" href="/">{{ site.title }}</a>
+    {% include "partials/menu.html" %}
+  </header>
+
   <main class="page page--error">
-    <h1>404</h1>
-    <p>Diese Seite konnten wir nicht finden.</p>
-    <p><a href="/">Zur Startseite</a></p>
+    <h1 class="page__error-code">404</h1>
+    <p class="page__error-message">Diese Seite konnten wir nicht finden.</p>
+    <p><a class="page__error-link" href="/">Zur Startseite</a></p>
   </main>
+
+  <footer class="site-footer">
+    <p>© {{ site.title }}</p>
+  </footer>
 </body>
 </html>

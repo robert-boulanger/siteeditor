@@ -50,9 +50,17 @@ body {
 
 .app-main {
   display: grid;
-  grid-template-columns: 280px 1fr;
+  grid-template-columns: var(--sidebar-width, 280px) 6px 1fr;
   overflow: hidden;
 }
+
+.sidebar-splitter {
+  background: var(--border);
+  cursor: col-resize;
+  transition: background 120ms ease;
+  user-select: none;
+}
+.sidebar-splitter:hover, .sidebar-splitter:active { background: var(--accent); }
 
 .sidebar {
   background: var(--panel);
@@ -63,6 +71,49 @@ body {
 .sidebar h3 { font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); margin: 1.5rem 0 0.5rem; }
 .project-meta { padding-bottom: 1rem; border-bottom: 1px solid var(--border); }
 .project-meta strong { display: block; }
+.theme-picker { display: flex; align-items: center; gap: 0.5rem; margin: 0.4rem 0; }
+.theme-picker select { flex: 1; min-width: 0; }
+.theme-css-btn {
+  display: block; width: 100%; margin: 0.2rem 0 0.5rem;
+  padding: 0.35rem 0.5rem; font-size: 0.85rem;
+  border: 1px solid var(--border); background: #fff; border-radius: 3px; cursor: pointer;
+}
+.theme-css-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+
+/* CSS-Editor-Modal */
+.modal.css-editor-modal {
+  min-width: 720px; width: 90vw; max-width: 1100px;
+  max-height: 88vh; height: 88vh;
+  padding: 0;
+  gap: 0;
+}
+.modal.css-editor-modal .modal-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0.75rem 1rem; border-bottom: 1px solid var(--border);
+}
+.modal.css-editor-modal .modal-header h3 { margin: 0; font-size: 0.95rem; font-weight: 600; }
+.modal.css-editor-modal .modal-header code { font-size: 0.85rem; color: var(--muted); font-weight: 400; }
+.modal.css-editor-modal .modal-header button {
+  background: none; border: none; font-size: 1.4rem; line-height: 1; cursor: pointer; color: var(--muted);
+}
+.modal.css-editor-modal .modal-error {
+  color: #c00; padding: 0.5rem 1rem; border-bottom: 1px solid var(--border); font-size: 0.85rem;
+}
+.css-editor-textarea {
+  flex: 1; width: 100%; resize: none; border: none; outline: none;
+  padding: 1rem; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px; line-height: 1.5; tab-size: 2;
+}
+.modal.css-editor-modal .modal-footer {
+  display: flex; align-items: center; gap: 0.5rem;
+  padding: 0.6rem 1rem; border-top: 1px solid var(--border);
+}
+.modal.css-editor-modal .modal-footer .spacer { flex: 1; }
+.modal.css-editor-modal .modal-footer button {
+  padding: 0.4rem 0.9rem; border: 1px solid var(--border); border-radius: 3px; background: #fff; cursor: pointer;
+}
+.modal.css-editor-modal .modal-footer button.save-btn { background: var(--accent); color: #fff; border-color: var(--accent); }
+.modal.css-editor-modal .modal-footer button:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .page-list { list-style: none; padding: 0; margin: 0; }
 .page-list li { margin-bottom: 0.25rem; }
@@ -242,12 +293,71 @@ body {
   font-size: 0.65rem; background: #ddd; padding: 0 0.35rem; border-radius: 2px;
   align-self: flex-start; color: #555;
 }
-.page-actions { display: flex; flex-direction: column; gap: 0.1rem; }
+.page-actions { display: flex; flex-direction: row; gap: 0.1rem; align-items: center; }
 .page-actions button {
   border: 1px solid transparent; background: transparent; cursor: pointer;
-  font-size: 0.85rem; padding: 0.1rem 0.3rem; border-radius: 3px;
+  font-size: 0.85rem; padding: 0.2rem 0.3rem; border-radius: 3px;
+  display: inline-flex; align-items: center; justify-content: center;
 }
 .page-actions button:hover { background: #f1f1f3; border-color: var(--border); }
+
+/* Page-Tree (Modell B: hierarchische Slugs) */
+.page-tree, .page-tree-children {
+  list-style: none; padding: 0; margin: 0;
+}
+.page-tree-node { margin: 0; }
+.page-tree-row {
+  display: flex; align-items: center; gap: 0.2rem;
+  padding-right: 0.25rem;
+}
+.page-tree .page-select {
+  flex: 1; text-align: left; background: transparent; border: 0; cursor: pointer;
+  padding: 0.35rem 0.4rem; border-radius: 3px;
+  display: flex; flex-direction: row; align-items: center; gap: 0.4rem;
+  min-width: 0; /* erlaubt Textumbruch in flex */
+}
+.page-tree .page-select:hover { background: #f1f1f3; }
+.page-tree-node.is-active > .page-tree-row > .page-select { background: #eef4fc; }
+.page-tree .tree-toggle {
+  width: 1.3rem; height: 1.3rem; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 0; background: transparent; cursor: pointer; flex-shrink: 0;
+  font-size: 0.95rem; color: var(--muted); border-radius: 3px;
+}
+.page-tree .tree-toggle:hover { background: #f1f1f3; color: var(--accent); }
+.page-tree .tree-toggle--empty { visibility: hidden; cursor: default; }
+.page-tree .title { font-size: 0.9rem; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.page-tree .slug { font-size: 0.72rem; font-family: ui-monospace, monospace; }
+.page-tree .badge {
+  font-size: 0.6rem; background: #ddd; padding: 0 0.3rem; border-radius: 2px;
+  color: #555; flex-shrink: 0;
+}
+
+/* DnD-Zonen im Page-Tree */
+.page-tree-gap {
+  height: 4px; margin: 1px 0; border-radius: 2px; background: transparent;
+  transition: background 80ms ease, height 80ms ease;
+}
+.page-tree-gap.is-over { background: var(--accent); height: 6px; }
+.page-tree-row.is-drop-target { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: 4px; }
+.page-tree-node.is-dragging { opacity: 0.4; }
+.page-tree-root-drop {
+  height: 8px; margin-bottom: 2px; border-radius: 3px;
+  background: transparent;
+  transition: background 80ms ease;
+}
+.page-tree-root-drop.is-over { background: var(--accent); }
+.page-tree-drag-ghost {
+  background: #fff; border: 1px solid var(--accent); border-radius: 4px;
+  padding: 0.3rem 0.5rem; font-family: ui-monospace, monospace; font-size: 0.8rem;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.2);
+  color: var(--accent); pointer-events: none;
+}
+.page-select { cursor: grab; }
+.page-select:active { cursor: grabbing; }
+.page-actions .fav { color: var(--muted); }
+.page-actions .fav.is-on { color: #d4a017; }
+.page-actions .fav:hover { color: #d4a017; }
 
 .page-header-row {
   display: flex; align-items: center; justify-content: space-between;

@@ -31,6 +31,7 @@ fn bootstrap_and_build() {
     write(&theme.join("templates/404.html"), include_str!("../../../themes/default/templates/404.html"));
     write(&theme.join("templates/partials/head.html"), include_str!("../../../themes/default/templates/partials/head.html"));
     write(&theme.join("templates/partials/menu.html"), include_str!("../../../themes/default/templates/partials/menu.html"));
+    write(&theme.join("templates/partials/_menu_macros.html"), include_str!("../../../themes/default/templates/partials/_menu_macros.html"));
     write(&theme.join("styles/main.css"), include_str!("../../../themes/default/styles/main.css"));
 
     let project = Project::open(&root).expect("open project");

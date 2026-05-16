@@ -6,6 +6,8 @@ export type PageSummary = {
   title: string;
   visible: boolean;
   template: string | null;
+  menu_order: number | null;
+  favorite: boolean;
 };
 
 export type ProjectState = {
@@ -67,6 +69,11 @@ export function newBlock(type: Block["type"]): Block {
   }
 }
 
+export type ThemeInfo = {
+  slug: string;
+  display_name: string;
+};
+
 export type AssetInfo = {
   path: string;
   name: string;
@@ -98,6 +105,10 @@ type Store = {
   deleteAsset: (path: string) => Promise<void>;
   readAssetDataUrl: (path: string) => Promise<string>;
   build: () => Promise<BuildResult>;
+  movePage: (slug: string, newParent: string | null, newOrder: number | null) => Promise<void>;
+  setFavorite: (slug: string, favorite: boolean) => Promise<void>;
+  listThemes: () => Promise<ThemeInfo[]>;
+  setActiveTheme: (slug: string) => Promise<void>;
   setStatus: (s: string) => void;
 };
 
@@ -236,6 +247,60 @@ export const useStore = create<Store>((set, get) => ({
 
   readAssetDataUrl: async (path: string) => {
     return await invoke<string>("read_asset_data_url", { path });
+  },
+
+  setFavorite: async (slug, favorite) => {
+    try {
+      const pages = await invoke<PageSummary[]>("set_favorite", { slug, favorite });
+      const project = get().project;
+      if (project) set({ project: { ...project, pages } });
+      set({ status: favorite ? `Favorit: ${slug}` : `Favorit entfernt: ${slug}` });
+    } catch (e) {
+      set({ status: `Favorit-Fehler: ${e}` });
+      throw e;
+    }
+  },
+
+  movePage: async (slug, newParent, newOrder) => {
+    set({ busy: true, status: `Verschiebe ${slug} …` });
+    try {
+      const pages = await invoke<PageSummary[]>("move_page", {
+        args: { slug, new_parent: newParent, new_order: newOrder },
+      });
+      const project = get().project;
+      if (project) set({ project: { ...project, pages } });
+      set({ status: `Verschoben: ${slug}` });
+    } catch (e) {
+      set({ status: `Move-Fehler: ${e}` });
+      throw e;
+    } finally {
+      set({ busy: false });
+    }
+  },
+
+  listThemes: async () => {
+    return await invoke<ThemeInfo[]>("list_themes");
+  },
+
+  setActiveTheme: async (slug: string) => {
+    set({ busy: true, status: `Aktiviere Theme ${slug} …` });
+    try {
+      const active = await invoke<string>("set_active_theme", { slug });
+      const project = get().project;
+      if (project) set({ project: { ...project, active_theme: active } });
+      // Sofort neu bauen → SSE-Reload zeigt das neue Theme im Preview-Tab.
+      try {
+        const r = await invoke<BuildResult>("build_site");
+        set({ status: `Theme aktiv: ${active} — ${r.pages_rendered} Seiten neu gebaut` });
+      } catch (e) {
+        set({ status: `Theme aktiv: ${active} — Build fehlgeschlagen: ${e}` });
+      }
+    } catch (e) {
+      set({ status: `Theme-Wechsel-Fehler: ${e}` });
+      throw e;
+    } finally {
+      set({ busy: false });
+    }
   },
 
   build: async () => {

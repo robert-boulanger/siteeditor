@@ -144,12 +144,27 @@ pub fn is_valid_theme_name(name: &str) -> bool {
     !name.is_empty() && name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
 }
 
+/// Validiert einen (ggf. hierarchischen) Slug. Erlaubt `/` als Trenner;
+/// jedes Segment muss strikt kebab-case sein: nur `[a-z0-9-]`, kein
+/// führendes/trailing `-`, keine `--`. Gesamtlänge ≤ 128 Zeichen.
 pub fn is_valid_slug(slug: &str) -> bool {
-    if slug.is_empty() || slug.len() > 64 {
+    if slug.is_empty() || slug.len() > 128 || slug.starts_with('/') || slug.ends_with('/') {
+        return false;
+    }
+    for seg in slug.split('/') {
+        if !is_valid_slug_segment(seg) {
+            return false;
+        }
+    }
+    true
+}
+
+fn is_valid_slug_segment(seg: &str) -> bool {
+    if seg.is_empty() || seg.len() > 64 {
         return false;
     }
     let mut last_dash = false;
-    for (i, c) in slug.chars().enumerate() {
+    for (i, c) in seg.chars().enumerate() {
         let ok = c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-';
         if !ok {
             return false;
@@ -179,6 +194,17 @@ mod tests {
         assert!(!is_valid_slug("x-"));
         assert!(!is_valid_slug("x--y"));
         assert!(!is_valid_slug(""));
+    }
+    #[test]
+    fn slug_path_rules() {
+        // Hierarchische Slugs: jedes Segment muss kebab-case sein
+        assert!(is_valid_slug("about/team"));
+        assert!(is_valid_slug("a/b/c-d"));
+        assert!(!is_valid_slug("/leading"));
+        assert!(!is_valid_slug("trailing/"));
+        assert!(!is_valid_slug("a//b"));
+        assert!(!is_valid_slug("About/team"));
+        assert!(!is_valid_slug("a/-b"));
     }
     #[test]
     fn theme_name_rules() {

@@ -1,9 +1,8 @@
-<nav class="site-nav">
-  <ul>
-    {% for item in site.menu %}
-      <li class="{% if item.slug == page.slug %}is-active{% endif %}">
-        <a href="{{ item.url }}">{{ item.title }}</a>
-      </li>
-    {% endfor %}
-  </ul>
+{% import "partials/_menu_macros.html" as nav %}
+<input type="checkbox" id="nav-toggle" class="nav-toggle" aria-hidden="true">
+<label for="nav-toggle" class="nav-burger" aria-label="Menü öffnen/schließen">
+  <span></span><span></span><span></span>
+</label>
+<nav class="site-nav" aria-label="Hauptnavigation">
+  {{ nav::menu_list(items=site.menu, depth=0) }}
 </nav>

@@ -57,6 +57,10 @@ pub struct PageFrontmatter {
     pub blocks: Vec<serde_json::Value>,
     #[serde(default)]
     pub meta: BTreeMap<String, String>,
+    /// Im Editor als „Favorit" markiert — wird in der Sidebar oben angepinnt.
+    /// Hat keine Wirkung auf den gerenderten Output.
+    #[serde(default)]
+    pub favorite: bool,
 }
 
 fn default_visible() -> bool {
@@ -69,6 +73,14 @@ pub struct MenuConfig {
     pub show: bool,
     #[serde(default)]
     pub order: Option<i32>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ThemeInfo {
+    /// Verzeichnisname unter `themes/` — gleichzeitig `active_theme`-Wert.
+    pub slug: String,
+    /// `display_name` aus `theme.json`, fallback = slug.
+    pub display_name: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -130,26 +142,136 @@ impl Project {
         self.themes_dir().join(&self.manifest.active_theme)
     }
 
+    /// Listet alle Themes unter `themes/` (jeweils ein Verzeichnis mit
+    /// `theme.json`). Sortiert alphabetisch nach Slug; `display_name`
+    /// fällt auf den Slug zurück, falls `theme.json` ihn nicht setzt
+    /// oder unleserlich ist.
+    pub fn list_installed_themes(&self) -> Result<Vec<ThemeInfo>, ProjectError> {
+        let dir = self.themes_dir();
+        if !dir.exists() {
+            return Ok(Vec::new());
+        }
+        let mut out = Vec::new();
+        for entry in std::fs::read_dir(&dir)? {
+            let entry = entry?;
+            if !entry.file_type()?.is_dir() {
+                continue;
+            }
+            let slug = match entry.file_name().into_string() {
+                Ok(s) => s,
+                Err(_) => continue,
+            };
+            if slug.starts_with('.') {
+                continue;
+            }
+            let manifest_path = dir.join(&slug).join("theme.json");
+            if !manifest_path.exists() {
+                continue;
+            }
+            let display_name = std::fs::read_to_string(&manifest_path)
+                .ok()
+                .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+                .and_then(|v| v.get("display_name").and_then(|n| n.as_str()).map(|s| s.to_string()))
+                .unwrap_or_else(|| slug.clone());
+            out.push(ThemeInfo { slug, display_name });
+        }
+        out.sort_by(|a, b| a.slug.cmp(&b.slug));
+        Ok(out)
+    }
+
+    /// Liest die `styles/main.css` eines installierten Themes.
+    pub fn read_theme_css(&self, slug: &str) -> Result<String, ProjectError> {
+        let path = self.theme_css_path(slug)?;
+        Ok(std::fs::read_to_string(&path)?)
+    }
+
+    /// Überschreibt die `styles/main.css` eines installierten Themes
+    /// (atomar, ohne Backup-Rotation — der User akzeptiert die Änderung
+    /// bewusst, Git ist die Wahrheit). Erzwingt `\n` am Ende.
+    pub fn write_theme_css(&self, slug: &str, content: &str) -> Result<(), ProjectError> {
+        let path = self.theme_css_path(slug)?;
+        let normalized = if content.ends_with('\n') {
+            content.to_string()
+        } else {
+            format!("{content}\n")
+        };
+        atomic_write(&path, &normalized)
+    }
+
+    fn theme_css_path(&self, slug: &str) -> Result<Utf8PathBuf, ProjectError> {
+        if !is_safe_slug(slug) {
+            return Err(ProjectError::InvalidPage {
+                path: slug.to_string(),
+                reason: "theme-slug enthält unerlaubte Zeichen".into(),
+            });
+        }
+        let path = self.themes_dir().join(slug).join("styles").join("main.css");
+        if !path.exists() {
+            return Err(ProjectError::InvalidPage {
+                path: path.to_string(),
+                reason: "theme oder styles/main.css fehlt".into(),
+            });
+        }
+        Ok(path)
+    }
+
+    /// Aktiviert ein installiertes Theme: schreibt `site.json` neu (mit
+    /// `active_theme=<slug>`) und aktualisiert das in-memory-Manifest.
+    /// Schlägt fehl, wenn das Theme nicht installiert ist oder der Slug
+    /// unsicher wäre.
+    pub fn set_active_theme(&mut self, slug: &str) -> Result<(), ProjectError> {
+        if !is_safe_slug(slug) {
+            return Err(ProjectError::InvalidPage {
+                path: slug.to_string(),
+                reason: "theme-slug enthält unerlaubte Zeichen".into(),
+            });
+        }
+        let theme_dir = self.themes_dir().join(slug);
+        if !theme_dir.join("theme.json").exists() {
+            return Err(ProjectError::InvalidPage {
+                path: theme_dir.to_string(),
+                reason: "theme ist nicht installiert (theme.json fehlt)".into(),
+            });
+        }
+        let mut new_manifest = self.manifest.clone();
+        new_manifest.active_theme = slug.to_string();
+        let serialized = serde_json::to_string_pretty(&new_manifest)
+            .map_err(|e| ProjectError::InvalidSiteJson(e.to_string()))?;
+        atomic_write(&self.root.join("site.json"), &serialized)?;
+        self.manifest = new_manifest;
+        Ok(())
+    }
+
+    /// Listet alle Pages rekursiv unter `pages/`. Der Slug entspricht dem
+    /// relativen Pfad zur Page-Datei ohne `.md`, mit `/`-Trennern:
+    /// `pages/about.md` → `about`, `pages/about/team.md` → `about/team`.
     pub fn list_pages(&self) -> Result<Vec<PageDoc>, ProjectError> {
         let dir = self.pages_dir();
         if !dir.exists() {
             return Ok(Vec::new());
         }
         let mut pages = Vec::new();
-        for entry in walkdir::WalkDir::new(&dir).min_depth(1).max_depth(1) {
+        for entry in walkdir::WalkDir::new(&dir).min_depth(1) {
             let entry = entry?;
+            if !entry.file_type().is_file() {
+                continue;
+            }
             let path = entry.path();
             if path.extension().and_then(|s| s.to_str()) != Some("md") {
                 continue;
             }
             let utf8 = Utf8Path::from_path(path).ok_or(ProjectError::NonUtf8Path)?;
-            let slug = utf8
-                .file_stem()
-                .ok_or_else(|| ProjectError::InvalidPage {
-                    path: utf8.to_string(),
-                    reason: "no file stem".into(),
-                })?
-                .to_owned();
+            let rel = utf8
+                .strip_prefix(&dir)
+                .map_err(|_| ProjectError::NonUtf8Path)?;
+            let slug = rel
+                .as_str()
+                .trim_end_matches(".md")
+                .replace('\\', "/")
+                .to_string();
+            if slug.is_empty() {
+                continue;
+            }
             pages.push(load_page_file(utf8, slug)?);
         }
         pages.sort_by(|a, b| a.slug.cmp(&b.slug));
@@ -157,8 +279,130 @@ impl Project {
     }
 
     pub fn load_page(&self, slug: &str) -> Result<PageDoc, ProjectError> {
-        let path = self.pages_dir().join(format!("{slug}.md"));
+        let path = self.page_path(slug);
         load_page_file(&path, slug.to_string())
+    }
+
+    /// Pfad einer Page-Datei aus ihrem Slug (`a/b` → `pages/a/b.md`).
+    fn page_path(&self, slug: &str) -> Utf8PathBuf {
+        self.pages_dir().join(format!("{slug}.md"))
+    }
+
+    /// Pfad eines Section-Verzeichnisses (`about` → `pages/about/`).
+    /// Existiert nur, wenn die Section Kinder hat.
+    fn section_dir(&self, slug: &str) -> Utf8PathBuf {
+        self.pages_dir().join(slug)
+    }
+
+    /// Markiert/entmarkiert eine Page als Favorit. Schreibt die Page-Datei
+    /// neu mit aktualisiertem Frontmatter.
+    pub fn set_favorite(&self, slug: &str, favorite: bool) -> Result<(), ProjectError> {
+        let mut page = self.load_page(slug)?;
+        if page.frontmatter.favorite == favorite {
+            return Ok(());
+        }
+        page.frontmatter.favorite = favorite;
+        self.save_page_full(slug, &page.frontmatter, &page.body_markdown)
+    }
+
+    /// Verschiebt eine Page (Reparent + optionaler `menu.order`-Update) in
+    /// einer logisch atomaren Operation.
+    ///
+    /// - `new_parent = None` → die Page wird Root-Page.
+    /// - `new_parent = Some("about")` → die Page wird Kind von `about`.
+    ///   Der eigene Slug-Tail bleibt: `team` → `about/team`.
+    /// - `new_order = Some(n)` → setzt `menu.order = n`.
+    /// - Cycle-Verbot: ein Slug darf nicht in einen seiner Nachfahren
+    ///   verschoben werden.
+    /// - Wenn der Parent gleich bleibt, wird nur `menu.order` aktualisiert
+    ///   (kein File-Move). Liefert den (ggf. neuen) Slug zurück.
+    pub fn move_page(
+        &self,
+        slug: &str,
+        new_parent: Option<&str>,
+        new_order: Option<i32>,
+    ) -> Result<String, ProjectError> {
+        if !is_safe_slug(slug) {
+            return Err(ProjectError::InvalidPage {
+                path: slug.to_string(),
+                reason: "slug enthält unerlaubte Zeichen".into(),
+            });
+        }
+        if let Some(parent) = new_parent {
+            if !is_safe_slug(parent) {
+                return Err(ProjectError::InvalidPage {
+                    path: parent.to_string(),
+                    reason: "new_parent enthält unerlaubte Zeichen".into(),
+                });
+            }
+            // Cycle-Verbot: new_parent darf nicht slug selbst oder ein Nachfahre sein.
+            if parent == slug || parent.starts_with(&format!("{slug}/")) {
+                return Err(ProjectError::InvalidPage {
+                    path: parent.to_string(),
+                    reason: "cycle: page kann nicht in ihren eigenen Nachfahren verschoben werden".into(),
+                });
+            }
+            // Parent-Page muss existieren.
+            if !self.page_path(parent).exists() {
+                return Err(ProjectError::InvalidPage {
+                    path: parent.to_string(),
+                    reason: "new_parent-page existiert nicht".into(),
+                });
+            }
+        }
+
+        let current_parent = slug.rsplit_once('/').map(|(p, _)| p);
+        let tail = slug.rsplit_once('/').map(|(_, t)| t).unwrap_or(slug);
+
+        let parent_changed = current_parent != new_parent;
+        let new_slug = match new_parent {
+            Some(p) => format!("{p}/{tail}"),
+            None => tail.to_string(),
+        };
+
+        if parent_changed {
+            self.rename_page(slug, &new_slug)?;
+        }
+
+        if let Some(order) = new_order {
+            let mut page = self.load_page(&new_slug)?;
+            page.frontmatter.menu.order = Some(order);
+            self.save_page_full(&new_slug, &page.frontmatter, &page.body_markdown)?;
+        }
+
+        Ok(new_slug)
+    }
+
+    /// Liefert die Slugs aller Kinder einer Page (Pages, deren Slug mit
+    /// `<parent>/` beginnt). Eine Page mit nicht-existierendem Section-
+    /// Verzeichnis hat keine Kinder.
+    pub fn child_slugs(&self, parent_slug: &str) -> Result<Vec<String>, ProjectError> {
+        let section = self.section_dir(parent_slug);
+        if !section.is_dir() {
+            return Ok(Vec::new());
+        }
+        let prefix = format!("{parent_slug}/");
+        let mut out = Vec::new();
+        for entry in walkdir::WalkDir::new(&section).min_depth(1) {
+            let entry = entry?;
+            if !entry.file_type().is_file() {
+                continue;
+            }
+            let path = entry.path();
+            if path.extension().and_then(|s| s.to_str()) != Some("md") {
+                continue;
+            }
+            let utf8 = Utf8Path::from_path(path).ok_or(ProjectError::NonUtf8Path)?;
+            let rel = utf8
+                .strip_prefix(&self.pages_dir())
+                .map_err(|_| ProjectError::NonUtf8Path)?;
+            let slug = rel.as_str().trim_end_matches(".md").replace('\\', "/");
+            if slug.starts_with(&prefix) {
+                out.push(slug);
+            }
+        }
+        out.sort();
+        Ok(out)
     }
 
     /// Schreibt Frontmatter UND Body neu. Verwendet, wenn Blocks oder
@@ -177,7 +421,7 @@ impl Project {
                 reason: "slug enthält unerlaubte Zeichen".into(),
             });
         }
-        let path = self.pages_dir().join(format!("{slug}.md"));
+        let path = self.page_path(slug);
         if !path.exists() {
             return Err(ProjectError::InvalidPage {
                 path: path.to_string(),
@@ -209,7 +453,7 @@ impl Project {
                 reason: "slug enthält unerlaubte Zeichen".into(),
             });
         }
-        let path = self.pages_dir().join(format!("{slug}.md"));
+        let path = self.page_path(slug);
         if path.exists() {
             return Err(ProjectError::InvalidPage {
                 path: path.to_string(),
@@ -227,6 +471,9 @@ impl Project {
 
     /// Benennt eine Page um. Schlägt fehl, wenn das Ziel existiert oder die
     /// Quelle fehlt. Backups des alten Slugs werden mit verschoben.
+    /// Benennt eine Page um — inklusive ihres Section-Verzeichnisses (Kinder),
+    /// falls vorhanden, und der Backups. Schlägt fehl, wenn ein Konflikt mit
+    /// dem Ziel-Slug oder dessen Section-Verzeichnis besteht.
     pub fn rename_page(&self, old_slug: &str, new_slug: &str) -> Result<(), ProjectError> {
         if !is_safe_slug(new_slug) {
             return Err(ProjectError::InvalidPage {
@@ -237,8 +484,11 @@ impl Project {
         if old_slug == new_slug {
             return Ok(());
         }
-        let old_path = self.pages_dir().join(format!("{old_slug}.md"));
-        let new_path = self.pages_dir().join(format!("{new_slug}.md"));
+        let old_path = self.page_path(old_slug);
+        let new_path = self.page_path(new_slug);
+        let old_section = self.section_dir(old_slug);
+        let new_section = self.section_dir(new_slug);
+
         if !old_path.exists() {
             return Err(ProjectError::InvalidPage {
                 path: old_path.to_string(),
@@ -251,12 +501,32 @@ impl Project {
                 reason: "ziel-slug existiert bereits".into(),
             });
         }
+        if new_section.exists() {
+            return Err(ProjectError::InvalidPage {
+                path: new_section.to_string(),
+                reason: "ziel-section-verzeichnis existiert bereits".into(),
+            });
+        }
+
+        // Parent-Dir des Ziels bei Bedarf anlegen (für `a` → `b/c`).
+        if let Some(parent) = new_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+
         std::fs::rename(&old_path, &new_path)?;
 
-        // Backups mitziehen
+        // Kinder mitnehmen
+        if old_section.is_dir() {
+            std::fs::rename(&old_section, &new_section)?;
+        }
+
+        // Backups mitziehen (verschachtelt)
         let old_backup = self.root.join(".siteeditor/backups").join(old_slug);
         let new_backup = self.root.join(".siteeditor/backups").join(new_slug);
         if old_backup.exists() && !new_backup.exists() {
+            if let Some(parent) = new_backup.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
             std::fs::rename(&old_backup, &new_backup)?;
         }
         Ok(())
@@ -358,11 +628,23 @@ impl Project {
     /// Löscht eine Page. Backups verbleiben unter `.siteeditor/backups/<slug>/`
     /// zur Wiederherstellung.
     pub fn delete_page(&self, slug: &str) -> Result<(), ProjectError> {
-        let path = self.pages_dir().join(format!("{slug}.md"));
+        let path = self.page_path(slug);
         if !path.exists() {
             return Err(ProjectError::InvalidPage {
                 path: path.to_string(),
                 reason: "page existiert nicht".into(),
+            });
+        }
+        // Existieren Kinder, blockieren wir das Löschen — sonst hingen die
+        // Kinder nach dem Löschen unter einer URL, deren Parent-Section weg ist.
+        let children = self.child_slugs(slug)?;
+        if !children.is_empty() {
+            return Err(ProjectError::InvalidPage {
+                path: path.to_string(),
+                reason: format!(
+                    "page hat {} Kind-Page(s); zuerst diese verschieben oder löschen",
+                    children.len()
+                ),
             });
         }
         // Letzte Version noch einmal sichern, dann löschen.
@@ -374,14 +656,27 @@ impl Project {
     }
 }
 
-/// Slug-Sicherheit: keine Pfad-Trenner, keine `..`, kein Leerstring.
-/// Strenge Slug-Regeln (Kebab-Case) prüft `theme_contract::is_valid_slug`.
+/// Slug-Sicherheit. Slugs sind Pfade aus `/`-getrennten Segmenten, z.B.
+/// `about` oder `about/team`. Jedes Segment muss:
+/// - nicht leer sein
+/// - kein `\` enthalten
+/// - nicht `.` oder `..` sein
+/// - nicht mit `.` beginnen (keine versteckten Dateien)
+/// Der Gesamt-Slug darf zudem keinen führenden/trailing Slash haben.
+/// Strenge Kebab-Case-Regeln prüft `theme_contract::is_valid_slug`.
 fn is_safe_slug(slug: &str) -> bool {
-    !slug.is_empty()
-        && !slug.contains('/')
-        && !slug.contains('\\')
-        && !slug.contains("..")
-        && !slug.starts_with('.')
+    if slug.is_empty() || slug.starts_with('/') || slug.ends_with('/') {
+        return false;
+    }
+    if slug.contains('\\') {
+        return false;
+    }
+    for seg in slug.split('/') {
+        if seg.is_empty() || seg == "." || seg == ".." || seg.starts_with('.') {
+            return false;
+        }
+    }
+    true
 }
 
 fn is_safe_asset_path(p: &str) -> bool {
@@ -616,7 +911,7 @@ mod tests {
     #[test]
     fn save_page_full_rejects_unsafe_slug() {
         let (_tmp, project) = make_project_with_page("---\ntitle: T\n---\nbody\n");
-        for bad in ["../etc", "a/b", "..", ".hidden", ""] {
+        for bad in ["../etc", "..", ".hidden", "", "/abs", "trail/", "a//b", "a/./b", "a/../b", "a/.hidden", "a\\b"] {
             let err = project.save_page_full(bad, &fm("X"), "").unwrap_err();
             assert!(matches!(err, ProjectError::InvalidPage { .. }), "slug {bad} sollte abgelehnt werden");
         }
@@ -760,6 +1055,278 @@ mod tests {
         match err {
             ProjectError::Io(_) | ProjectError::InvalidPage { .. } => (),
             other => panic!("unerwarteter Fehler: {other:?}"),
+        }
+    }
+
+    // --- themes --------------------------------------------------------------
+
+    fn write_theme(project: &Project, slug: &str, display_name: Option<&str>) {
+        let dir = project.themes_dir().join(slug);
+        std::fs::create_dir_all(&dir).unwrap();
+        let body = match display_name {
+            Some(n) => format!(r#"{{"spec_version":"0.2","name":"{slug}","display_name":"{n}"}}"#),
+            None => format!(r#"{{"spec_version":"0.2","name":"{slug}"}}"#),
+        };
+        std::fs::write(dir.join("theme.json"), body).unwrap();
+    }
+
+    #[test]
+    fn list_installed_themes_sortiert_und_nimmt_display_name() {
+        let (_tmp, project) = make_project_with_page("---\ntitle: T\n---\n\n");
+        write_theme(&project, "bravo", Some("Bravo Theme"));
+        write_theme(&project, "alpha", None);
+        // ignoriert: kein theme.json
+        std::fs::create_dir_all(project.themes_dir().join("kaputt")).unwrap();
+        // ignoriert: versteckte Verzeichnisse
+        write_theme(&project, ".hidden", Some("X"));
+
+        let themes = project.list_installed_themes().unwrap();
+        let slugs: Vec<_> = themes.iter().map(|t| t.slug.clone()).collect();
+        assert_eq!(slugs, vec!["alpha", "bravo"]);
+        assert_eq!(themes[0].display_name, "alpha"); // fallback
+        assert_eq!(themes[1].display_name, "Bravo Theme");
+    }
+
+    #[test]
+    fn list_installed_themes_leer_wenn_dir_fehlt() {
+        let (_tmp, project) = make_project_with_page("---\ntitle: T\n---\n\n");
+        assert!(project.list_installed_themes().unwrap().is_empty());
+    }
+
+    #[test]
+    fn set_active_theme_persistiert_und_aktualisiert_manifest() {
+        let (_tmp, mut project) = make_project_with_page("---\ntitle: T\n---\n\n");
+        write_theme(&project, "default", Some("Default"));
+        write_theme(&project, "mocha", Some("Mocha"));
+
+        project.set_active_theme("mocha").unwrap();
+        assert_eq!(project.manifest.active_theme, "mocha");
+
+        // beim erneuten Öffnen persistent
+        let reopened = Project::open(&project.root).unwrap();
+        assert_eq!(reopened.manifest.active_theme, "mocha");
+    }
+
+    #[test]
+    fn set_active_theme_lehnt_unbekanntes_theme_ab() {
+        let (_tmp, mut project) = make_project_with_page("---\ntitle: T\n---\n\n");
+        let err = project.set_active_theme("ghost").unwrap_err();
+        assert!(matches!(err, ProjectError::InvalidPage { .. }));
+        assert_eq!(project.manifest.active_theme, "default"); // unverändert
+    }
+
+    #[test]
+    fn read_und_write_theme_css_roundtrip() {
+        let (_tmp, project) = make_project_with_page("---\ntitle: T\n---\n\n");
+        write_theme(&project, "default", Some("Default"));
+        let css_path = project.themes_dir().join("default/styles/main.css");
+        std::fs::create_dir_all(css_path.parent().unwrap()).unwrap();
+        std::fs::write(&css_path, "body { color: red; }\n").unwrap();
+
+        assert_eq!(project.read_theme_css("default").unwrap(), "body { color: red; }\n");
+        project.write_theme_css("default", "body { color: blue; }").unwrap();
+        // \n wird ergänzt
+        assert_eq!(project.read_theme_css("default").unwrap(), "body { color: blue; }\n");
+    }
+
+    #[test]
+    fn theme_css_lehnt_unbekanntes_theme_und_unsichere_slugs_ab() {
+        let (_tmp, project) = make_project_with_page("---\ntitle: T\n---\n\n");
+        write_theme(&project, "default", Some("Default"));
+        // theme ohne styles/main.css
+        let err = project.read_theme_css("default").unwrap_err();
+        assert!(matches!(err, ProjectError::InvalidPage { .. }));
+
+        for bad in ["../etc", "..", ".hidden", "", "/abs", "trail/", "a//b", "a/./b", "a/../b", "a/.hidden", "a\\b"] {
+            let err = project.read_theme_css(bad).unwrap_err();
+            assert!(matches!(err, ProjectError::InvalidPage { .. }), "slug {bad} sollte abgelehnt werden");
+            let err = project.write_theme_css(bad, "x").unwrap_err();
+            assert!(matches!(err, ProjectError::InvalidPage { .. }), "slug {bad} sollte abgelehnt werden");
+        }
+    }
+
+    #[test]
+    fn set_active_theme_lehnt_unsichere_slugs_ab() {
+        let (_tmp, mut project) = make_project_with_page("---\ntitle: T\n---\n\n");
+        for bad in ["../etc", "..", ".hidden", "", "/abs", "trail/", "a//b", "a/./b", "a/../b", "a/.hidden", "a\\b"] {
+            let err = project.set_active_theme(bad).unwrap_err();
+            assert!(matches!(err, ProjectError::InvalidPage { .. }), "slug {bad} sollte abgelehnt werden");
+        }
+    }
+
+    // --- hierarchische Slugs (Modell B: Filesystem-Hierarchie) --------------
+
+    #[test]
+    fn list_pages_findet_subpages_rekursiv_und_setzt_slug_auf_relpfad() {
+        let (_tmp, project) = make_project_with_page("---\ntitle: Home\n---\n\n");
+        std::fs::create_dir_all(project.pages_dir().join("about")).unwrap();
+        std::fs::write(project.pages_dir().join("about.md"), "---\ntitle: A\n---\n").unwrap();
+        std::fs::write(project.pages_dir().join("about/team.md"), "---\ntitle: T\n---\n").unwrap();
+        std::fs::create_dir_all(project.pages_dir().join("about/team")).unwrap();
+        std::fs::write(project.pages_dir().join("about/team/role.md"), "---\ntitle: R\n---\n").unwrap();
+
+        let slugs: Vec<_> = project.list_pages().unwrap().into_iter().map(|p| p.slug).collect();
+        assert_eq!(slugs, vec!["about", "about/team", "about/team/role", "index"]);
+    }
+
+    #[test]
+    fn create_und_load_page_mit_pfad_slug() {
+        let (_tmp, project) = make_project_with_page("---\ntitle: H\n---\n\n");
+        project.create_page("about/team", &fm("Team"), "body\n").unwrap();
+        assert!(project.pages_dir().join("about/team.md").exists());
+        let loaded = project.load_page("about/team").unwrap();
+        assert_eq!(loaded.slug, "about/team");
+        assert_eq!(loaded.frontmatter.title, "Team");
+    }
+
+    #[test]
+    fn child_slugs_liefert_alle_kinder_rekursiv() {
+        let (_tmp, project) = make_project_with_page("---\ntitle: H\n---\n\n");
+        project.create_page("about", &fm("A"), "").unwrap();
+        project.create_page("about/team", &fm("T"), "").unwrap();
+        project.create_page("about/team/role", &fm("R"), "").unwrap();
+        project.create_page("contact", &fm("C"), "").unwrap();
+
+        let children = project.child_slugs("about").unwrap();
+        assert_eq!(children, vec!["about/team", "about/team/role"]);
+        assert!(project.child_slugs("contact").unwrap().is_empty());
+    }
+
+    #[test]
+    fn delete_page_lehnt_ab_wenn_kinder_existieren() {
+        let (_tmp, project) = make_project_with_page("---\ntitle: H\n---\n\n");
+        project.create_page("about", &fm("A"), "").unwrap();
+        project.create_page("about/team", &fm("T"), "").unwrap();
+
+        let err = project.delete_page("about").unwrap_err();
+        match err {
+            ProjectError::InvalidPage { reason, .. } => assert!(reason.contains("Kind-Page")),
+            other => panic!("unerwarteter Fehler: {other:?}"),
+        }
+        // erst Kind weg, dann Parent
+        project.delete_page("about/team").unwrap();
+        project.delete_page("about").unwrap();
+    }
+
+    #[test]
+    fn rename_page_zieht_kinder_und_backups_mit() {
+        let (_tmp, project) = make_project_with_page("---\ntitle: H\n---\n\n");
+        project.create_page("about", &fm("A"), "").unwrap();
+        project.create_page("about/team", &fm("T"), "").unwrap();
+        // backup erzeugen
+        project.save_page_full("about", &fm("A2"), "").unwrap();
+
+        project.rename_page("about", "company").unwrap();
+
+        assert!(!project.pages_dir().join("about.md").exists());
+        assert!(!project.pages_dir().join("about").exists());
+        assert!(project.pages_dir().join("company.md").exists());
+        assert!(project.pages_dir().join("company/team.md").exists());
+        assert!(!project.root.join(".siteeditor/backups/about").exists());
+        assert!(project.root.join(".siteeditor/backups/company").exists());
+    }
+
+    #[test]
+    fn rename_page_kann_in_subpath_verschieben() {
+        let (_tmp, project) = make_project_with_page("---\ntitle: H\n---\n\n");
+        project.create_page("contact", &fm("C"), "").unwrap();
+
+        project.rename_page("contact", "about/contact").unwrap();
+        assert!(!project.pages_dir().join("contact.md").exists());
+        assert!(project.pages_dir().join("about/contact.md").exists());
+    }
+
+    #[test]
+    fn rename_page_lehnt_kollision_mit_existierendem_section_dir_ab() {
+        let (_tmp, project) = make_project_with_page("---\ntitle: H\n---\n\n");
+        project.create_page("about", &fm("A"), "").unwrap();
+        project.create_page("about/team", &fm("T"), "").unwrap(); // legt about/ als Section an
+        project.create_page("company", &fm("C"), "").unwrap();
+
+        let err = project.rename_page("company", "about").unwrap_err();
+        assert!(matches!(err, ProjectError::InvalidPage { .. }));
+    }
+
+    #[test]
+    fn set_favorite_persistiert_im_frontmatter() {
+        let (_tmp, project) = make_project_with_page("---\ntitle: H\n---\n\n");
+        project.create_page("about", &fm("A"), "").unwrap();
+        assert!(!project.load_page("about").unwrap().frontmatter.favorite);
+
+        project.set_favorite("about", true).unwrap();
+        assert!(project.load_page("about").unwrap().frontmatter.favorite);
+
+        project.set_favorite("about", false).unwrap();
+        assert!(!project.load_page("about").unwrap().frontmatter.favorite);
+    }
+
+    #[test]
+    fn move_page_reparent_aendert_slug_und_zieht_kinder_mit() {
+        let (_tmp, project) = make_project_with_page("---\ntitle: H\n---\n\n");
+        project.create_page("about", &fm("A"), "").unwrap();
+        project.create_page("about/team", &fm("T"), "").unwrap();
+
+        let new_slug = project.move_page("about/team", Some("index"), None).unwrap();
+        assert_eq!(new_slug, "index/team");
+        assert!(project.pages_dir().join("index/team.md").exists());
+        assert!(!project.pages_dir().join("about/team.md").exists());
+    }
+
+    #[test]
+    fn move_page_promote_zu_root() {
+        let (_tmp, project) = make_project_with_page("---\ntitle: H\n---\n\n");
+        project.create_page("about", &fm("A"), "").unwrap();
+        project.create_page("about/team", &fm("T"), "").unwrap();
+
+        let new_slug = project.move_page("about/team", None, None).unwrap();
+        assert_eq!(new_slug, "team");
+        assert!(project.pages_dir().join("team.md").exists());
+    }
+
+    #[test]
+    fn move_page_setzt_menu_order_ohne_reparent() {
+        let (_tmp, project) = make_project_with_page("---\ntitle: H\n---\n\n");
+        project.create_page("about", &fm("A"), "").unwrap();
+
+        let new_slug = project.move_page("about", None, Some(42)).unwrap();
+        assert_eq!(new_slug, "about");
+        let reloaded = project.load_page("about").unwrap();
+        assert_eq!(reloaded.frontmatter.menu.order, Some(42));
+    }
+
+    #[test]
+    fn move_page_lehnt_cycle_ab() {
+        let (_tmp, project) = make_project_with_page("---\ntitle: H\n---\n\n");
+        project.create_page("about", &fm("A"), "").unwrap();
+        project.create_page("about/team", &fm("T"), "").unwrap();
+
+        // about → about/team (eigener Nachfahre)
+        let err = project.move_page("about", Some("about/team"), None).unwrap_err();
+        match err {
+            ProjectError::InvalidPage { reason, .. } => assert!(reason.contains("cycle")),
+            other => panic!("unerwarteter Fehler: {other:?}"),
+        }
+        // about → about (self)
+        let err = project.move_page("about", Some("about"), None).unwrap_err();
+        assert!(matches!(err, ProjectError::InvalidPage { .. }));
+    }
+
+    #[test]
+    fn move_page_lehnt_nicht_existenten_parent_ab() {
+        let (_tmp, project) = make_project_with_page("---\ntitle: H\n---\n\n");
+        project.create_page("about", &fm("A"), "").unwrap();
+        let err = project.move_page("about", Some("ghost"), None).unwrap_err();
+        assert!(matches!(err, ProjectError::InvalidPage { .. }));
+    }
+
+    #[test]
+    fn is_safe_slug_accepts_kebab_paths_und_blockt_traversal() {
+        assert!(is_safe_slug("about"));
+        assert!(is_safe_slug("about/team"));
+        assert!(is_safe_slug("a/b/c/d"));
+        // Blockierte Slugs
+        for bad in ["", "/", "/abs", "trail/", "..", "../etc", "a/../b", "a/./b", "a//b", ".hidden", "a/.hidden", "a\\b"] {
+            assert!(!is_safe_slug(bad), "slug {bad:?} sollte abgelehnt werden");
         }
     }
 

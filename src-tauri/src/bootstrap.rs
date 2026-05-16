@@ -86,6 +86,24 @@ blocks:
 "#;
     write(target.join("pages").join("about.md"), about_md)?;
 
+    // Subpage als Demo für hierarchische Pages (Modell B: Filesystem-Hierarchie).
+    let team_md = r#"---
+title: Team
+template: page
+visible: true
+menu:
+  show: true
+  order: 1
+blocks:
+  - type: hero
+    headline: "Unser Team"
+  - type: text
+    content: |
+      Hier kommt die Vorstellung der Köpfe hinter dem Projekt.
+---
+"#;
+    write(target.join("pages").join("about").join("team.md"), team_md)?;
+
     // themes/default -> copy from app bundle? Easier: write inline minimal default.
     write_default_theme(&target.join("themes").join("default"))?;
 
@@ -96,6 +114,14 @@ blocks:
 }
 
 fn write(path: Utf8PathBuf, content: &str) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).with_context(|| format!("mkdir {parent}"))?;
+    }
+    std::fs::write(&path, content).with_context(|| format!("write {path}"))?;
+    Ok(())
+}
+
+fn write_bytes(path: Utf8PathBuf, content: &[u8]) -> Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).with_context(|| format!("mkdir {parent}"))?;
     }
@@ -121,8 +147,12 @@ mod tests {
         assert!(target.join("site.json").exists());
         assert!(target.join("pages/index.md").exists());
         assert!(target.join("pages/about.md").exists());
+        assert!(target.join("pages/about/team.md").exists());
         assert!(target.join("themes/default/theme.json").exists());
         assert!(target.join("themes/default/templates/index.html").exists());
+        assert!(target.join("themes/default/assets/fonts/Inter-Regular.woff2").exists());
+        assert!(target.join("themes/default/assets/fonts/Inter-SemiBold.woff2").exists());
+        assert!(target.join("themes/default/assets/fonts/Inter-Bold.woff2").exists());
         assert!(target.join("assets").is_dir());
     }
 
@@ -155,5 +185,19 @@ fn write_default_theme(dir: &Utf8Path) -> Result<()> {
     write(dir.join("templates/404.html"), include_str!("../../themes/default/templates/404.html"))?;
     write(dir.join("templates/partials/head.html"), include_str!("../../themes/default/templates/partials/head.html"))?;
     write(dir.join("templates/partials/menu.html"), include_str!("../../themes/default/templates/partials/menu.html"))?;
+    write(dir.join("templates/partials/_menu_macros.html"), include_str!("../../themes/default/templates/partials/_menu_macros.html"))?;
+    // Inter-Fonts (OFL) lokal mitgeben — kein CDN.
+    write_bytes(
+        dir.join("assets/fonts/Inter-Regular.woff2"),
+        include_bytes!("../../themes/default/assets/fonts/Inter-Regular.woff2"),
+    )?;
+    write_bytes(
+        dir.join("assets/fonts/Inter-SemiBold.woff2"),
+        include_bytes!("../../themes/default/assets/fonts/Inter-SemiBold.woff2"),
+    )?;
+    write_bytes(
+        dir.join("assets/fonts/Inter-Bold.woff2"),
+        include_bytes!("../../themes/default/assets/fonts/Inter-Bold.woff2"),
+    )?;
     Ok(())
 }

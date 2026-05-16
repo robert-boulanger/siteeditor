@@ -1,0 +1,12 @@
+{% macro menu_list(items, depth) %}
+  <ul class="nav-list nav-list--depth-{{ depth }}">
+    {% for item in items %}
+      <li class="nav-item{% if item.slug == page.slug %} is-active{% endif %}{% if item.children %} has-children{% endif %}">
+        <a class="nav-link" href="{{ item.url | safe }}">{{ item.title }}</a>
+        {% if item.children %}
+          {{ self::menu_list(items=item.children, depth=depth + 1) }}
+        {% endif %}
+      </li>
+    {% endfor %}
+  </ul>
+{% endmacro menu_list %}

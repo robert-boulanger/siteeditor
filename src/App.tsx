@@ -1,12 +1,15 @@
 import { useEffect, useState } from "react";
 import { useStore } from "./store";
-import type { Block, PageFrontmatter } from "./store";
+import type { Block, PageFrontmatter, ThemeInfo } from "./store";
 import { open as openDialog, save as saveDialog, ask } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
-import { Eye, EyeOff, Pencil, Trash2, Plus } from "lucide-react";
+import { Plus } from "lucide-react";
 import { BlockList } from "./components/blocks/BlockList";
 import { NewPageDialog } from "./components/NewPageDialog";
 import { RenamePageDialog } from "./components/RenamePageDialog";
+import { ThemeCssEditor } from "./components/ThemeCssEditor";
+import { PageTree, buildPageTree } from "./components/PageTree";
+import { SidebarSplitter, loadSidebarWidth } from "./components/SidebarSplitter";
 import "./App.css";
 
 function App() {
@@ -14,11 +17,35 @@ function App() {
     project, currentPage, status, busy,
     bootstrap, open, loadPage, savePageFull, build,
     createPage, renamePage, deletePage,
+    listThemes, setActiveTheme,
+    movePage, setFavorite,
   } = useStore();
 
   const [draftFm, setDraftFm] = useState<PageFrontmatter | null>(null);
   const [showNewPage, setShowNewPage] = useState(false);
   const [renameSlug, setRenameSlug] = useState<string | null>(null);
+  const [themes, setThemes] = useState<ThemeInfo[]>([]);
+  const [cssEditorOpen, setCssEditorOpen] = useState(false);
+
+  useEffect(() => {
+    const w = loadSidebarWidth();
+    document.documentElement.style.setProperty("--sidebar-width", `${w}px`);
+  }, []);
+
+  useEffect(() => {
+    if (!project) { setThemes([]); return; }
+    listThemes().then(setThemes).catch(() => setThemes([]));
+  }, [project?.root, listThemes]);
+
+  async function handleThemeChange(slug: string) {
+    if (!project || slug === project.active_theme) return;
+    if (!(await confirmDirtyOrContinue())) return;
+    try {
+      await setActiveTheme(slug);
+      const next = await listThemes();
+      setThemes(next);
+    } catch { /* status zeigt Fehler */ }
+  }
 
   const dirty =
     currentPage != null &&
@@ -138,7 +165,33 @@ function App() {
             <>
               <div className="project-meta">
                 <strong>{project.title}</strong>
-                <div className="muted">Theme: {project.active_theme}</div>
+                <label className="theme-picker">
+                  <span className="muted">Theme</span>
+                  <select
+                    value={project.active_theme}
+                    disabled={busy || themes.length === 0}
+                    onChange={(e) => handleThemeChange(e.currentTarget.value)}
+                  >
+                    {/* aktuelles Theme auch dann zeigen, wenn list_themes es nicht (mehr) kennt */}
+                    {!themes.some((t) => t.slug === project.active_theme) && (
+                      <option value={project.active_theme}>{project.active_theme}</option>
+                    )}
+                    {themes.map((t) => (
+                      <option key={t.slug} value={t.slug}>
+                        {t.display_name}
+                        {t.slug !== t.display_name ? ` (${t.slug})` : ""}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <button
+                  className="theme-css-btn"
+                  onClick={() => setCssEditorOpen(true)}
+                  disabled={busy}
+                  title="CSS des aktiven Themes bearbeiten"
+                >
+                  Theme-CSS bearbeiten…
+                </button>
                 <div className="muted small">{project.root}</div>
               </div>
               <div className="pages-header">
@@ -150,39 +203,47 @@ function App() {
                   <Plus size={14} /> Neu
                 </button>
               </div>
-              <ul className="page-list">
-                {project.pages.map((p) => (
-                  <li key={p.slug} className={currentPage?.slug === p.slug ? "is-active" : ""}>
-                    <button
-                      className="page-select"
-                      onClick={() => handleLoadPage(p.slug)}
-                    >
-                      <span className="slug">{p.slug}</span>
-                      <span className="title">{p.title}</span>
-                      {!p.visible && <span className="badge">hidden</span>}
-                    </button>
-                    <span className="page-actions">
-                      <button
-                        title={p.visible ? "Page ausblenden" : "Page einblenden"}
-                        onClick={() => handleToggleVisible(p.slug)}
-                      >
-                        {p.visible ? <Eye size={14} /> : <EyeOff size={14} />}
-                      </button>
-                      <button title="Umbenennen" onClick={() => handleRename(p.slug)}>
-                        <Pencil size={14} />
-                      </button>
-                      <button title="Löschen" onClick={() => handleDelete(p.slug)}>
-                        <Trash2 size={14} />
-                      </button>
-                    </span>
-                  </li>
-                ))}
-              </ul>
+              {project.pages.some((p) => p.favorite) && (
+                <>
+                  <h3>Favoriten</h3>
+                  <PageTree
+                    flat
+                    nodes={project.pages
+                      .filter((p) => p.favorite)
+                      .sort((a, b) => a.title.localeCompare(b.title))
+                      .map((p) => ({ ...p, children: [], order: 0 }))}
+                    currentSlug={currentPage?.slug}
+                    onSelect={handleLoadPage}
+                    onToggleVisible={handleToggleVisible}
+                    onToggleFavorite={(slug, fav) => { setFavorite(slug, fav).catch(() => {}); }}
+                    onRename={handleRename}
+                    onDelete={handleDelete}
+                    onMove={() => { /* in der Favoriten-Liste kein DnD */ }}
+                  />
+                  <h3>Alle Pages</h3>
+                </>
+              )}
+              <PageTree
+                nodes={buildPageTree(project.pages)}
+                currentSlug={currentPage?.slug}
+                onSelect={handleLoadPage}
+                onToggleVisible={handleToggleVisible}
+                onToggleFavorite={(slug, fav) => { setFavorite(slug, fav).catch(() => {}); }}
+                onRename={handleRename}
+                onDelete={handleDelete}
+                onMove={async (slug, newParent, newOrder) => {
+                  if (!(await confirmDirtyOrContinue())) return;
+                  try { await movePage(slug, newParent, newOrder); }
+                  catch { /* status zeigt Fehler */ }
+                }}
+              />
             </>
           ) : (
             <p className="muted">Kein Projekt geöffnet. Lege ein Beispielprojekt an oder öffne einen vorhandenen Ordner.</p>
           )}
         </aside>
+
+        <SidebarSplitter onChange={() => { /* width lives in CSS var */ }} />
 
         <section className="main-pane">
           {currentPage && draftFm ? (
@@ -244,6 +305,13 @@ function App() {
             await renamePage(renameSlug, next);
             setRenameSlug(null);
           }}
+        />
+      )}
+
+      {cssEditorOpen && project && (
+        <ThemeCssEditor
+          slug={project.active_theme}
+          onClose={() => setCssEditorOpen(false)}
         />
       )}
 

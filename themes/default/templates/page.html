@@ -1,3 +1,4 @@
+{% import "partials/_menu_macros.html" as nav %}
 <!doctype html>
 <html lang="{{ site.language | default(value="en") }}">
 <head>
@@ -13,11 +14,11 @@
     {% for block in blocks %}
 
       {% if block.type == "hero" %}
-        <section class="block hero" style="text-align: {{ block.align | default(value="center") }}">
+        <section class="block hero hero--align-{{ block.align | default(value="center") }}">
           {% if block.image %}
             <figure class="hero__figure">
               <img class="hero__image" src="{{ block.image }}" alt="{{ block.image_caption | default(value="") }}">
-              {% if block.image_caption %}<figcaption>{{ block.image_caption }}</figcaption>{% endif %}
+              {% if block.image_caption %}<figcaption class="hero__caption">{{ block.image_caption }}</figcaption>{% endif %}
             </figure>
           {% endif %}
           <h1 class="hero__headline">{{ block.headline }}</h1>
@@ -31,47 +32,55 @@
 
       {% elif block.type == "image" %}
         <figure class="block image image--{{ block.width | default(value="normal") }}">
-          <img src="{{ block.image }}" alt="{{ block.caption | default(value="") }}">
-          {% if block.caption %}<figcaption>{{ block.caption }}</figcaption>{% endif %}
+          <img class="image__img" src="{{ block.image }}" alt="{{ block.caption | default(value="") }}">
+          {% if block.caption %}<figcaption class="image__caption">{{ block.caption }}</figcaption>{% endif %}
         </figure>
 
       {% elif block.type == "gallery" %}
         <section class="block gallery gallery--{{ block.layout | default(value="grid") }}"
                  style="--gallery-cols: {{ block.columns | default(value=3) }}">
           {% for img in block.images %}
-            <figure>
-              <img src="{{ img.src }}" alt="{{ img.caption | default(value="") }}">
-              {% if img.caption %}<figcaption>{{ img.caption }}</figcaption>{% endif %}
+            <figure class="gallery__item">
+              <img class="gallery__image" src="{{ img.src }}" alt="{{ img.caption | default(value="") }}">
+              {% if img.caption %}<figcaption class="gallery__caption">{{ img.caption }}</figcaption>{% endif %}
             </figure>
           {% endfor %}
         </section>
 
       {% elif block.type == "video" %}
         <figure class="block video">
-          <video src="{{ block.source }}" controls {% if block.autoplay %}autoplay muted{% endif %}></video>
-          {% if block.caption %}<figcaption>{{ block.caption }}</figcaption>{% endif %}
+          <video class="video__player" src="{{ block.source }}" controls {% if block.autoplay %}autoplay muted{% endif %}></video>
+          {% if block.caption %}<figcaption class="video__caption">{{ block.caption }}</figcaption>{% endif %}
         </figure>
 
       {% elif block.type == "cta" %}
-        <p class="block cta">
+        <div class="block cta">
           <a class="cta__btn cta__btn--{{ block.style | default(value="primary") }}"
              href="{{ block.href }}">{{ block.text }}</a>
-        </p>
+        </div>
 
       {% elif block.type == "columns" %}
         <section class="block columns columns--{{ block.columns | length }}">
           {% for col in block.columns %}
             <div class="columns__col">
               {% for inner in col %}
-                {% if inner.type == "text" %}<div class="prose">{{ inner.content_html | safe }}</div>{% endif %}
-                {% if inner.type == "image" %}
-                  <figure>
-                    <img src="{{ inner.image }}" alt="{{ inner.caption | default(value="") }}">
-                    {% if inner.caption %}<figcaption>{{ inner.caption }}</figcaption>{% endif %}
+                {% if inner.type == "text" %}
+                  <div class="columns__item columns__item--text prose">{{ inner.content_html | safe }}</div>
+                {% elif inner.type == "image" %}
+                  <figure class="columns__item columns__item--image image">
+                    <img class="image__img" src="{{ inner.image }}" alt="{{ inner.caption | default(value="") }}">
+                    {% if inner.caption %}<figcaption class="image__caption">{{ inner.caption }}</figcaption>{% endif %}
                   </figure>
+                {% elif inner.type == "cta" %}
+                  <div class="columns__item columns__item--cta cta">
+                    <a class="cta__btn cta__btn--{{ inner.style | default(value="primary") }}" href="{{ inner.href }}">{{ inner.text }}</a>
+                  </div>
+                {% elif inner.type == "quote" %}
+                  <blockquote class="columns__item columns__item--quote quote">
+                    <p class="quote__text">{{ inner.text }}</p>
+                    {% if inner.author %}<cite class="quote__cite">— {{ inner.author }}{% if inner.source %}, <em>{{ inner.source }}</em>{% endif %}</cite>{% endif %}
+                  </blockquote>
                 {% endif %}
-                {% if inner.type == "cta" %}<a class="cta__btn" href="{{ inner.href }}">{{ inner.text }}</a>{% endif %}
-                {% if inner.type == "quote" %}<blockquote>{{ inner.text }}</blockquote>{% endif %}
               {% endfor %}
             </div>
           {% endfor %}
@@ -79,8 +88,8 @@
 
       {% elif block.type == "quote" %}
         <blockquote class="block quote">
-          <p>{{ block.text }}</p>
-          {% if block.author %}<cite>— {{ block.author }}{% if block.source %}, <em>{{ block.source }}</em>{% endif %}</cite>{% endif %}
+          <p class="quote__text">{{ block.text }}</p>
+          {% if block.author %}<cite class="quote__cite">— {{ block.author }}{% if block.source %}, <em>{{ block.source }}</em>{% endif %}</cite>{% endif %}
         </blockquote>
 
       {% endif %}

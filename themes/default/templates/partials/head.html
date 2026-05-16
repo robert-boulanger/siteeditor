@@ -1,5 +1,6 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{{ page.title }} — {{ site.title }}</title>
+<title>{{ page.title | default(value="Seite") }} — {{ site.title }}</title>
 {% if site.description %}<meta name="description" content="{{ site.description }}">{% endif %}
+<link rel="stylesheet" href="/styles/_vars.css">
 <link rel="stylesheet" href="/styles/main.css">

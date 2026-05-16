@@ -2,20 +2,20 @@
   "spec_version": "0.2",
   "name": "default",
   "display_name": "Default",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": "siteeditor",
-  "description": "Schlichtes, neutrales Reference-Theme. Erfüllt THEME_SPEC v0.2 vollständig.",
+  "description": "Schlick, elegant, weiss-hochglanz. Inter (SIL OFL 1.1) lokal eingebettet — kein CDN, keine externen Requests. Landing-Hero im Full-Bleed.",
   "supported_blocks": [
     "hero", "text", "image", "gallery", "video", "cta", "columns", "quote"
   ],
   "unsupported_blocks": [],
   "css_variables": {
-    "--color-primary":   "#1a73e8",
+    "--color-primary":   "#0a0a0a",
     "--color-bg":        "#ffffff",
-    "--color-text":      "#1a1a1a",
-    "--font-body":       "system-ui, -apple-system, sans-serif",
-    "--font-heading":    "system-ui, -apple-system, sans-serif",
-    "--radius":          "6px",
-    "--spacing-section": "4rem"
+    "--color-text":      "#0a0a0a",
+    "--font-body":       "'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif",
+    "--font-heading":    "'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif",
+    "--radius":          "2px",
+    "--spacing-section": "6rem"
   }
 }
