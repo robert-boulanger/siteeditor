@@ -31,6 +31,8 @@ sitebuilder.workspace = true
 
 axum = "0.7"
 tokio = { version = "1", features = ["full"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
+futures-util = "0.3"
 mime_guess = "2"
 base64 = "0.22"
 

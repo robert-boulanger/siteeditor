@@ -1,5 +1,22 @@
-import { useState } from "react";
-import { ChevronDown, ChevronRight, ArrowUp, ArrowDown, Trash2, ChevronsDown, ChevronsUp } from "lucide-react";
+import { useRef, useState } from "react";
+import { ChevronDown, ChevronRight, ArrowUp, ArrowDown, Trash2, ChevronsDown, ChevronsUp, GripVertical } from "lucide-react";
+import {
+  DndContext,
+  PointerSensor,
+  KeyboardSensor,
+  useSensor,
+  useSensors,
+  closestCenter,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  arrayMove,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import type { Block } from "../../store";
 import { BLOCK_TYPES, newBlock } from "../../store";
 import { BlockForm } from "./BlockForms";
@@ -23,6 +40,45 @@ const BLOCK_DESCRIPTIONS: Record<Block["type"], string> = {
 export function BlockList({ blocks, onChange }: Props) {
   const [openIdxs, setOpenIdxs] = useState<Set<number>>(new Set());
 
+  // Stabile IDs pro Block-Objekt-Identität — bleiben über Reorder erhalten,
+  // damit dnd-kit-Animationen sauber laufen. update() ersetzt das Objekt,
+  // dann bekommt es eine neue ID — das ist ok, weil dabei keine DnD-Animation läuft.
+  const idMap = useRef(new WeakMap<Block, string>());
+  const idCounter = useRef(0);
+  const idOf = (b: Block): string => {
+    let id = idMap.current.get(b);
+    if (!id) {
+      id = `b${++idCounter.current}`;
+      idMap.current.set(b, id);
+    }
+    return id;
+  };
+  const ids = blocks.map(idOf);
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
+
+  const onDragEnd = (e: DragEndEvent) => {
+    const { active, over } = e;
+    if (!over || active.id === over.id) return;
+    const from = ids.indexOf(String(active.id));
+    const to = ids.indexOf(String(over.id));
+    if (from < 0 || to < 0) return;
+    onChange(arrayMove(blocks, from, to));
+    setOpenIdxs((prev) => {
+      const next = new Set<number>();
+      for (const i of prev) {
+        if (i === from) next.add(to);
+        else if (from < to && i > from && i <= to) next.add(i - 1);
+        else if (from > to && i >= to && i < from) next.add(i + 1);
+        else next.add(i);
+      }
+      return next;
+    });
+  };
+
   const toggle = (i: number) => {
     setOpenIdxs((prev) => {
       const next = new Set(prev);
@@ -35,6 +91,11 @@ export function BlockList({ blocks, onChange }: Props) {
   const collapseAll = () => setOpenIdxs(new Set());
 
   const update = (idx: number, b: Block) => {
+    // Sortier-ID auf das neue Block-Objekt vererben, sonst bekommt der <li>
+    // einen neuen React-Key und TipTap im Text-Block wird bei jeder
+    // Tastatureingabe ge-remountet (Cursor weg, Eingabe verloren).
+    const prevId = idMap.current.get(blocks[idx]);
+    if (prevId) idMap.current.set(b, prevId);
     const next = [...blocks];
     next[idx] = b;
     onChange(next);
@@ -84,38 +145,26 @@ export function BlockList({ blocks, onChange }: Props) {
           </button>
         </div>
       )}
-      <ol>
-        {blocks.map((b, i) => {
-          const isOpen = openIdxs.has(i);
-          return (
-            <li key={i} className={isOpen ? "is-open" : ""}>
-              <div className="block-head">
-                <button className="block-type" onClick={() => toggle(i)} title={isOpen ? "Einklappen" : "Ausklappen"}>
-                  {isOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                  <span className="badge">{b.type}</span>
-                  <span className="hint">{blockSummary(b)}</span>
-                </button>
-                <span className="block-actions">
-                  <button type="button" title="Nach oben verschieben" onClick={() => move(i, -1)} disabled={i === 0}>
-                    <ArrowUp size={14} />
-                  </button>
-                  <button type="button" title="Nach unten verschieben" onClick={() => move(i, 1)} disabled={i === blocks.length - 1}>
-                    <ArrowDown size={14} />
-                  </button>
-                  <button type="button" title="Block löschen" onClick={() => remove(i)}>
-                    <Trash2 size={14} />
-                  </button>
-                </span>
-              </div>
-              {isOpen && (
-                <div className="block-body">
-                  <BlockForm block={b} onChange={(nb) => update(i, nb)} />
-                </div>
-              )}
-            </li>
-          );
-        })}
-      </ol>
+      <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
+        <SortableContext items={ids} strategy={verticalListSortingStrategy}>
+          <ol>
+            {blocks.map((b, i) => (
+              <SortableBlockItem
+                key={ids[i]}
+                id={ids[i]}
+                block={b}
+                index={i}
+                total={blocks.length}
+                isOpen={openIdxs.has(i)}
+                onToggle={() => toggle(i)}
+                onMove={(dir) => move(i, dir)}
+                onRemove={() => remove(i)}
+                onUpdate={(nb) => update(i, nb)}
+              />
+            ))}
+          </ol>
+        </SortableContext>
+      </DndContext>
       <BlockPalette onAdd={add} />
     </div>
   );
@@ -132,6 +181,72 @@ function blockSummary(b: Block): string {
     case "columns": return `${b.columns.length} Spalten`;
     case "quote": return b.text.slice(0, 60);
   }
+}
+
+type SortableBlockItemProps = {
+  id: string;
+  block: Block;
+  index: number;
+  total: number;
+  isOpen: boolean;
+  onToggle: () => void;
+  onMove: (dir: -1 | 1) => void;
+  onRemove: () => void;
+  onUpdate: (b: Block) => void;
+};
+
+function SortableBlockItem({
+  id, block, index, total, isOpen, onToggle, onMove, onRemove, onUpdate,
+}: SortableBlockItemProps) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
+  const style: React.CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : undefined,
+  };
+  return (
+    <li ref={setNodeRef} style={style} className={isOpen ? "is-open" : ""}>
+      <div className="block-head">
+        {isOpen ? (
+          <span className="block-drag is-disabled" title="Block zum Verschieben einklappen">
+            <GripVertical size={14} />
+          </span>
+        ) : (
+          <button
+            type="button"
+            className="block-drag"
+            title="Zum Verschieben ziehen"
+            aria-label="Drag handle"
+            {...attributes}
+            {...listeners}
+          >
+            <GripVertical size={14} />
+          </button>
+        )}
+        <button className="block-type" onClick={onToggle} title={isOpen ? "Einklappen" : "Ausklappen"}>
+          {isOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+          <span className="badge">{block.type}</span>
+          <span className="hint">{blockSummary(block)}</span>
+        </button>
+        <span className="block-actions">
+          <button type="button" title="Nach oben verschieben" onClick={() => onMove(-1)} disabled={index === 0}>
+            <ArrowUp size={14} />
+          </button>
+          <button type="button" title="Nach unten verschieben" onClick={() => onMove(1)} disabled={index === total - 1}>
+            <ArrowDown size={14} />
+          </button>
+          <button type="button" title="Block löschen" onClick={onRemove}>
+            <Trash2 size={14} />
+          </button>
+        </span>
+      </div>
+      {isOpen && (
+        <div className="block-body">
+          <BlockForm block={block} onChange={onUpdate} />
+        </div>
+      )}
+    </li>
+  );
 }
 
 function BlockPalette({ onAdd }: { onAdd: (t: Block["type"]) => void }) {

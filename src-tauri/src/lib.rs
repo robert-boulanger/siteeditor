@@ -247,6 +247,7 @@ fn build_site(state: tauri::State<'_, AppState>) -> Result<BuildResult, String> 
     let project = guard.as_ref().ok_or_else(|| "no project open".to_string())?;
     let report = sitebuilder::build_site(project).map_err(to_str_err)?;
     state.preview.set_root(project.build_dir());
+    state.preview.notify_reload();
     let index_file = format!("{}/index.html", report.output_dir);
     Ok(BuildResult {
         pages_rendered: report.pages_rendered,

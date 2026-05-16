@@ -6,6 +6,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { Eye, EyeOff, Pencil, Trash2, Plus } from "lucide-react";
 import { BlockList } from "./components/blocks/BlockList";
 import { NewPageDialog } from "./components/NewPageDialog";
+import { RenamePageDialog } from "./components/RenamePageDialog";
 import "./App.css";
 
 function App() {
@@ -17,6 +18,7 @@ function App() {
 
   const [draftFm, setDraftFm] = useState<PageFrontmatter | null>(null);
   const [showNewPage, setShowNewPage] = useState(false);
+  const [renameSlug, setRenameSlug] = useState<string | null>(null);
 
   const dirty =
     currentPage != null &&
@@ -38,8 +40,11 @@ function App() {
   async function handleSave() {
     if (!currentPage || !draftFm) return;
     // body bleibt leer — alle Texte stecken inzwischen in den text-Blocks.
-    try { await savePageFull(currentPage.slug, draftFm, ""); }
-    catch { /* status zeigt Fehler */ }
+    try {
+      await savePageFull(currentPage.slug, draftFm, "");
+      // Build hinterherjagen, damit der offene Preview-Tab via SSE neu lädt.
+      await build();
+    } catch { /* status zeigt Fehler */ }
   }
 
   async function handleLoadPage(slug: string) {
@@ -73,10 +78,8 @@ function App() {
   }
 
   async function handleRename(oldSlug: string) {
-    const next = window.prompt(`Neuer Slug für "${oldSlug}":`, oldSlug);
-    if (!next || next === oldSlug) return;
-    try { await renamePage(oldSlug, next); }
-    catch { /* status */ }
+    if (!(await confirmDirtyOrContinue())) return;
+    setRenameSlug(oldSlug);
   }
 
   async function handleDelete(slug: string) {
@@ -231,6 +234,18 @@ function App() {
       </div>
 
       <footer className="status-bar">{status}</footer>
+
+      {renameSlug && project && (
+        <RenamePageDialog
+          oldSlug={renameSlug}
+          existingSlugs={project.pages.map((p) => p.slug).filter((s) => s !== renameSlug)}
+          onCancel={() => setRenameSlug(null)}
+          onRename={async (next) => {
+            await renamePage(renameSlug, next);
+            setRenameSlug(null);
+          }}
+        />
+      )}
 
       {showNewPage && project && (
         <NewPageDialog
