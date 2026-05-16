@@ -82,6 +82,13 @@ pub trait Uploader: Send {
 
     /// Führt den eigentlichen Upload aus. Schreibt am Ende das neue
     /// Manifest auf Remote (`MANIFEST_FILENAME`).
+    ///
+    /// **Vertrag (Phase 10 §7):** Implementierungen MÜSSEN exakt die
+    /// Files aus [`UploadPlan::diff`]`.upload` übertragen — nicht mehr
+    /// (sonst geht die Diff-Ersparnis verloren), nicht weniger (sonst
+    /// lügt die Dry-Run-Anzeige der UI). Das `plan.local_manifest` ist
+    /// nur die Quelle für das Manifest-Write am Ende und für Bytegrößen
+    /// in den `ProgressEvent`s.
     fn upload(
         &mut self,
         plan: &UploadPlan<'_>,
