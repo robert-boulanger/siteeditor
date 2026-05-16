@@ -27,7 +27,8 @@ pub fn bootstrap_example_project(target: &Utf8Path) -> Result<()> {
 "#;
     write(target.join("site.json"), site_json)?;
 
-    // pages
+    // pages — neues Modell: jeder text-Block trägt sein eigenes Markdown im
+    // `content`-Feld. Es gibt keinen globalen Page-Body mehr.
     let index_md = r#"---
 title: Willkommen
 template: index
@@ -41,19 +42,23 @@ blocks:
     sub: "Ein erster Smoke-Test mit siteeditor"
     align: center
   - type: text
+    content: |
+      Das hier ist der **Prosa-Bereich**, den der Editor als WYSIWYG zeigt.
+
+      Eine Liste:
+
+      - Punkt eins
+      - Punkt zwei
+      - Punkt drei
   - type: cta
     text: "Mehr erfahren"
     href: "/about/"
     style: primary
+  - type: text
+    content: |
+      Und hier ein **zweiter** Text-Block — jeder Text-Block ist unabhängig
+      editierbar, mit eigenem TipTap-Editor.
 ---
-
-Das hier ist der **Prosa-Bereich**, den der Editor später als WYSIWYG zeigt.
-
-Eine Liste:
-
-- Punkt eins
-- Punkt zwei
-- Punkt drei
 "#;
     write(target.join("pages").join("index.md"), index_md)?;
 
@@ -68,16 +73,16 @@ blocks:
   - type: hero
     headline: "Über uns"
   - type: text
+    content: |
+      Hier kommt eine kurze Beschreibung dessen, was wir tun.
+
+      ## Unsere Werte
+
+      Schlicht. Schnell. Verständlich.
   - type: quote
     text: "Das Beste, was du tun kannst, ist anfangen."
     author: "Unbekannt"
 ---
-
-Hier kommt eine kurze Beschreibung dessen, was wir tun.
-
-## Unsere Werte
-
-Schlicht. Schnell. Verständlich.
 "#;
     write(target.join("pages").join("about.md"), about_md)?;
 

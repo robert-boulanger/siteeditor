@@ -1,35 +1,49 @@
 import { useEffect, useState } from "react";
 import { useStore } from "./store";
+import type { Block, PageFrontmatter } from "./store";
 import { open as openDialog, save as saveDialog, ask } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
+import { Eye, EyeOff, Pencil, Trash2, Plus } from "lucide-react";
+import { BlockList } from "./components/blocks/BlockList";
+import { NewPageDialog } from "./components/NewPageDialog";
 import "./App.css";
 
 function App() {
-  const { project, currentPage, status, busy, bootstrap, open, loadPage, savePageBody, build } = useStore();
-  const [draft, setDraft] = useState<string>("");
-  const dirty = currentPage ? draft !== currentPage.body_markdown : false;
+  const {
+    project, currentPage, status, busy,
+    bootstrap, open, loadPage, savePageFull, build,
+    createPage, renamePage, deletePage,
+  } = useStore();
+
+  const [draftFm, setDraftFm] = useState<PageFrontmatter | null>(null);
+  const [showNewPage, setShowNewPage] = useState(false);
+
+  const dirty =
+    currentPage != null &&
+    draftFm != null &&
+    JSON.stringify(draftFm) !== JSON.stringify(currentPage.frontmatter);
 
   useEffect(() => {
-    setDraft(currentPage?.body_markdown ?? "");
-  }, [currentPage?.slug, currentPage?.body_markdown]);
+    setDraftFm(currentPage ? structuredClone(currentPage.frontmatter) : null);
+  }, [currentPage?.slug, currentPage?.frontmatter]);
+
+  async function confirmDirtyOrContinue(): Promise<boolean> {
+    if (!dirty) return true;
+    return await ask("Ungespeicherte Änderungen verwerfen?", {
+      title: "Achtung",
+      kind: "warning",
+    });
+  }
 
   async function handleSave() {
-    if (!currentPage) return;
-    try {
-      await savePageBody(currentPage.slug, draft);
-    } catch {
-      /* status zeigt Fehler */
-    }
+    if (!currentPage || !draftFm) return;
+    // body bleibt leer — alle Texte stecken inzwischen in den text-Blocks.
+    try { await savePageFull(currentPage.slug, draftFm, ""); }
+    catch { /* status zeigt Fehler */ }
   }
 
   async function handleLoadPage(slug: string) {
-    if (dirty) {
-      const ok = await ask("Ungespeicherte Änderungen verwerfen?", {
-        title: "Seitenwechsel",
-        kind: "warning",
-      });
-      if (!ok) return;
-    }
+    if (!(await confirmDirtyOrContinue())) return;
     loadPage(slug);
   }
 
@@ -55,9 +69,44 @@ function App() {
       } catch (e) {
         useStore.getState().setStatus(`Build OK, aber Browser-Öffnen fehlgeschlagen: ${e}`);
       }
-    } catch {
-      /* build-Fehler ist bereits in der Status-Bar */
-    }
+    } catch { /* build-Fehler bereits in Status */ }
+  }
+
+  async function handleRename(oldSlug: string) {
+    const next = window.prompt(`Neuer Slug für "${oldSlug}":`, oldSlug);
+    if (!next || next === oldSlug) return;
+    try { await renamePage(oldSlug, next); }
+    catch { /* status */ }
+  }
+
+  async function handleDelete(slug: string) {
+    const ok = await ask(`Page "${slug}" wirklich löschen?`, {
+      title: "Löschen bestätigen",
+      kind: "warning",
+    });
+    if (!ok) return;
+    try { await deletePage(slug); }
+    catch { /* status */ }
+  }
+
+  async function handleToggleVisible(slug: string) {
+    // Klein-Operation: Page laden, frontmatter.visible togglen, save.
+    if (!project) return;
+    try {
+      const page = await invoke<{ frontmatter: PageFrontmatter }>("load_page", { slug });
+      const fm = { ...page.frontmatter, visible: !page.frontmatter.visible };
+      await savePageFull(slug, fm, "");
+    } catch { /* status */ }
+  }
+
+  function updateFm<K extends keyof PageFrontmatter>(key: K, value: PageFrontmatter[K]) {
+    setDraftFm((prev) => (prev ? { ...prev, [key]: value } : prev));
+  }
+  function updateMenu<K extends keyof PageFrontmatter["menu"]>(key: K, value: PageFrontmatter["menu"][K]) {
+    setDraftFm((prev) => (prev ? { ...prev, menu: { ...prev.menu, [key]: value } } : prev));
+  }
+  function updateBlocks(blocks: Block[]) {
+    setDraftFm((prev) => (prev ? { ...prev, blocks } : prev));
   }
 
   return (
@@ -80,18 +129,40 @@ function App() {
                 <div className="muted">Theme: {project.active_theme}</div>
                 <div className="muted small">{project.root}</div>
               </div>
-              <h3>Pages</h3>
+              <div className="pages-header">
+                <h3>Pages</h3>
+                <button className="add-page" title="Neue Page anlegen" onClick={async () => {
+                  if (!(await confirmDirtyOrContinue())) return;
+                  setShowNewPage(true);
+                }}>
+                  <Plus size={14} /> Neu
+                </button>
+              </div>
               <ul className="page-list">
                 {project.pages.map((p) => (
-                  <li key={p.slug}>
+                  <li key={p.slug} className={currentPage?.slug === p.slug ? "is-active" : ""}>
                     <button
-                      className={currentPage?.slug === p.slug ? "is-active" : ""}
+                      className="page-select"
                       onClick={() => handleLoadPage(p.slug)}
                     >
                       <span className="slug">{p.slug}</span>
                       <span className="title">{p.title}</span>
                       {!p.visible && <span className="badge">hidden</span>}
                     </button>
+                    <span className="page-actions">
+                      <button
+                        title={p.visible ? "Page ausblenden" : "Page einblenden"}
+                        onClick={() => handleToggleVisible(p.slug)}
+                      >
+                        {p.visible ? <Eye size={14} /> : <EyeOff size={14} />}
+                      </button>
+                      <button title="Umbenennen" onClick={() => handleRename(p.slug)}>
+                        <Pencil size={14} />
+                      </button>
+                      <button title="Löschen" onClick={() => handleDelete(p.slug)}>
+                        <Trash2 size={14} />
+                      </button>
+                    </span>
                   </li>
                 ))}
               </ul>
@@ -102,31 +173,51 @@ function App() {
         </aside>
 
         <section className="main-pane">
-          {currentPage ? (
+          {currentPage && draftFm ? (
             <article>
-              <h2>{currentPage.frontmatter.title}</h2>
-              <p className="muted small">
-                slug: <code>{currentPage.slug}</code> · template:{" "}
-                <code>{currentPage.frontmatter.template ?? "(default)"}</code> · blocks:{" "}
-                {currentPage.frontmatter.blocks.length}
-              </p>
-
-              <h4>Blocks (Frontmatter)</h4>
-              <pre className="json">{JSON.stringify(currentPage.frontmatter.blocks, null, 2)}</pre>
-
-              <div className="body-header">
-                <h4>Body (Markdown)</h4>
+              <div className="page-header-row">
+                <h2>{draftFm.title}</h2>
                 <div className="body-actions">
                   {dirty && <span className="dirty-dot" title="Ungespeicherte Änderungen">●</span>}
                   <button onClick={handleSave} disabled={!dirty || busy}>Speichern</button>
                 </div>
               </div>
-              <textarea
-                className="body-editor"
-                value={draft}
-                onChange={(e) => setDraft(e.currentTarget.value)}
-                spellCheck={false}
-              />
+
+              <details className="page-meta" open>
+                <summary>Page-Metadaten</summary>
+                <div className="meta-grid">
+                  <label>
+                    <span>Titel</span>
+                    <input value={draftFm.title} onChange={(e) => updateFm("title", e.currentTarget.value)} />
+                  </label>
+                  <label>
+                    <span>Template</span>
+                    <select value={draftFm.template ?? "page"} onChange={(e) => updateFm("template", e.currentTarget.value)}>
+                      <option value="page">page</option>
+                      <option value="index">index</option>
+                    </select>
+                  </label>
+                  <label className="row">
+                    <input type="checkbox" checked={draftFm.visible} onChange={(e) => updateFm("visible", e.currentTarget.checked)} />
+                    <span>sichtbar</span>
+                  </label>
+                  <label className="row">
+                    <input type="checkbox" checked={draftFm.menu.show} onChange={(e) => updateMenu("show", e.currentTarget.checked)} />
+                    <span>im Menü</span>
+                  </label>
+                  <label>
+                    <span>Menü-Reihenfolge</span>
+                    <input
+                      type="number"
+                      value={draftFm.menu.order ?? 100}
+                      onChange={(e) => updateMenu("order", Number(e.currentTarget.value))}
+                    />
+                  </label>
+                </div>
+              </details>
+
+              <h4>Blocks</h4>
+              <BlockList blocks={draftFm.blocks as Block[]} onChange={updateBlocks} />
             </article>
           ) : (
             <p className="muted">Keine Page ausgewählt.</p>
@@ -135,6 +226,17 @@ function App() {
       </div>
 
       <footer className="status-bar">{status}</footer>
+
+      {showNewPage && project && (
+        <NewPageDialog
+          existingSlugs={project.pages.map((p) => p.slug)}
+          onCancel={() => setShowNewPage(false)}
+          onCreate={async (slug, fm) => {
+            await createPage(slug, fm);
+            setShowNewPage(false);
+          }}
+        />
+      )}
     </div>
   );
 }

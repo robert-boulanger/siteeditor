@@ -61,8 +61,6 @@ struct PageCtx {
     url: String,
     template: String,
     meta: BTreeMap<String, String>,
-    content_html: String,
-    content_markdown: String,
     blocks: Vec<serde_json::Value>,
 }
 
@@ -190,6 +188,31 @@ fn build_menu(pages: &[PageDoc], order: &[String]) -> Vec<MenuItem> {
     items
 }
 
+/// Walkt durch alle Blocks und ergänzt `content_html` für jeden `text`-Block
+/// aus dessen `content`-Markdown. Innerhalb von `columns` rekursiv.
+fn render_text_blocks(blocks: &mut [serde_json::Value]) {
+    for block in blocks.iter_mut() {
+        let Some(obj) = block.as_object_mut() else { continue };
+        let kind = obj.get("type").and_then(|v| v.as_str()).map(String::from);
+        match kind.as_deref() {
+            Some("text") => {
+                let md = obj.get("content").and_then(|v| v.as_str()).unwrap_or("");
+                obj.insert("content_html".into(), serde_json::Value::String(render_markdown(md)));
+            }
+            Some("columns") => {
+                if let Some(cols) = obj.get_mut("columns").and_then(|v| v.as_array_mut()) {
+                    for col in cols.iter_mut() {
+                        if let Some(inner) = col.as_array_mut() {
+                            render_text_blocks(inner);
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
 fn page_url(slug: &str) -> String {
     if slug == "index" { "/".into() } else { format!("/{slug}/") }
 }
@@ -212,16 +235,9 @@ fn render_page(
         .unwrap_or_else(|| if page.slug == "index" { "index.html".into() } else { "page.html".into() });
     let template = if template.ends_with(".html") { template } else { format!("{template}.html") };
 
-    // text-block-Validator: 0 oder 1
-    let text_count = page
-        .frontmatter
-        .blocks
-        .iter()
-        .filter(|b| b.get("type").and_then(|v| v.as_str()) == Some("text"))
-        .count();
-    if text_count > 1 {
-        return Err(anyhow!("[MULTIPLE_TEXT_BLOCKS] page {}", page.slug));
-    }
+    // Jeden text-Block (top-level + verschachtelt in Columns) zu HTML rendern.
+    let mut blocks = page.frontmatter.blocks.clone();
+    render_text_blocks(&mut blocks);
 
     let page_ctx = PageCtx {
         title: page.frontmatter.title.clone(),
@@ -229,9 +245,7 @@ fn render_page(
         url: page_url(&page.slug),
         template: template.clone(),
         meta: page.frontmatter.meta.clone(),
-        content_html: render_markdown(&page.body_markdown),
-        content_markdown: page.body_markdown.clone(),
-        blocks: page.frontmatter.blocks.clone(),
+        blocks,
     };
 
     let mut ctx = TeraContext::new();

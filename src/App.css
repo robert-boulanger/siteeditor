@@ -116,19 +116,76 @@ body {
 .body-actions button:disabled { opacity: 0.5; cursor: not-allowed; }
 .dirty-dot { color: var(--accent); font-size: 1.2rem; }
 
-.body-editor {
-  width: 100%;
-  min-height: 22rem;
+.prose-editor {
   margin-top: 0.5rem;
-  padding: 0.75rem;
   border: 1px solid var(--border);
   border-radius: 4px;
-  font-family: ui-monospace, "SF Mono", monospace;
-  font-size: 0.9rem;
-  line-height: 1.5;
-  resize: vertical;
+  display: flex;
+  flex-direction: column;
+  background: #fff;
 }
-.body-editor:focus { outline: none; border-color: var(--accent); }
+.prose-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.15rem;
+  padding: 0.35rem 0.5rem;
+  border-bottom: 1px solid var(--border);
+  background: #fafafa;
+  align-items: center;
+}
+.prose-toolbar button {
+  font-size: 0.85rem;
+  padding: 0.2rem 0.5rem;
+  border: 1px solid transparent;
+  background: transparent;
+  border-radius: 3px;
+  cursor: pointer;
+  color: inherit;
+  min-width: 1.6rem;
+}
+.prose-toolbar button:hover { background: #eef; }
+.prose-toolbar button.is-active { background: var(--accent); color: #fff; }
+.prose-toolbar .sep {
+  width: 1px;
+  align-self: stretch;
+  background: var(--border);
+  margin: 0.1rem 0.3rem;
+}
+.prose-editor-surface {
+  min-height: 22rem;
+  padding: 0.75rem 1rem;
+  line-height: 1.55;
+  font-size: 0.95rem;
+}
+.prose-editor-surface .ProseMirror {
+  outline: none;
+  min-height: 20rem;
+}
+.prose-editor-surface h1 { font-size: 1.6rem; margin: 0.7rem 0 0.4rem; }
+.prose-editor-surface h2 { font-size: 1.3rem; margin: 0.6rem 0 0.35rem; }
+.prose-editor-surface h3 { font-size: 1.1rem; margin: 0.5rem 0 0.3rem; }
+.prose-editor-surface p { margin: 0.4rem 0; }
+.prose-editor-surface ul, .prose-editor-surface ol { padding-left: 1.4rem; }
+.prose-editor-surface blockquote {
+  border-left: 3px solid var(--border);
+  margin: 0.5rem 0;
+  padding: 0.1rem 0.8rem;
+  color: #555;
+}
+.prose-editor-surface code {
+  background: #f4f4f4;
+  padding: 0.05rem 0.3rem;
+  border-radius: 3px;
+  font-family: ui-monospace, "SF Mono", monospace;
+  font-size: 0.85em;
+}
+.prose-editor-surface pre {
+  background: #f4f4f4;
+  padding: 0.6rem 0.8rem;
+  border-radius: 4px;
+  overflow-x: auto;
+}
+.prose-editor-surface pre code { background: transparent; padding: 0; }
 
 .main-pane pre {
   background: #fafafa;
@@ -150,3 +207,146 @@ body {
   font-size: 0.8rem;
   color: var(--muted);
 }
+
+/* --- Phase 06: Page-CRUD + Block-Editor --- */
+
+.pages-header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-top: 1.5rem;
+}
+.pages-header h3 { margin: 0; }
+.add-page {
+  font-size: 0.8rem; padding: 0.15rem 0.5rem;
+  border: 1px solid var(--border); background: #fff; border-radius: 3px; cursor: pointer;
+}
+.add-page:hover { border-color: var(--accent); color: var(--accent); }
+
+.page-list li {
+  display: flex; align-items: stretch; gap: 0.2rem;
+  margin-bottom: 0.15rem;
+}
+.page-list li.is-active .page-select { background: #eef4fc; }
+.page-list .page-select {
+  flex: 1; text-align: left; background: transparent; border: 0; cursor: pointer;
+  padding: 0.4rem 0.5rem; border-radius: 3px; display: flex; flex-direction: column; gap: 0.1rem;
+}
+.page-list .page-select:hover { background: #f1f1f3; }
+.page-list .slug { font-size: 0.75rem; color: var(--muted); font-family: ui-monospace, monospace; }
+.page-list .title { font-size: 0.9rem; }
+.page-list .badge {
+  font-size: 0.65rem; background: #ddd; padding: 0 0.35rem; border-radius: 2px;
+  align-self: flex-start; color: #555;
+}
+.page-actions { display: flex; flex-direction: column; gap: 0.1rem; }
+.page-actions button {
+  border: 1px solid transparent; background: transparent; cursor: pointer;
+  font-size: 0.85rem; padding: 0.1rem 0.3rem; border-radius: 3px;
+}
+.page-actions button:hover { background: #f1f1f3; border-color: var(--border); }
+
+.page-header-row {
+  display: flex; align-items: center; justify-content: space-between;
+}
+
+.page-meta { margin: 0.5rem 0 1rem; padding: 0.5rem 0.75rem; border: 1px solid var(--border); border-radius: 4px; background: #fff; }
+.page-meta summary { cursor: pointer; font-weight: 600; }
+.meta-grid {
+  margin-top: 0.5rem;
+  display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem 1rem;
+}
+.meta-grid label { display: flex; flex-direction: column; gap: 0.2rem; font-size: 0.85rem; }
+.meta-grid label.row { flex-direction: row; align-items: center; gap: 0.4rem; }
+.meta-grid input, .meta-grid select {
+  padding: 0.25rem 0.4rem; border: 1px solid var(--border); border-radius: 3px;
+}
+
+/* Block-Editor */
+.block-list ol { list-style: none; padding: 0; margin: 0 0 0.5rem; }
+.block-list li {
+  border: 1px solid var(--border); border-radius: 4px; background: #fff;
+  margin-bottom: 0.4rem;
+}
+.block-list li.is-open { border-color: var(--accent); }
+.block-head { display: flex; align-items: center; padding: 0.3rem 0.5rem; gap: 0.4rem; }
+.block-type {
+  flex: 1; display: flex; gap: 0.5rem; align-items: center; text-align: left;
+  background: transparent; border: 0; cursor: pointer; padding: 0.2rem;
+}
+.block-type .badge {
+  font-family: ui-monospace, monospace; font-size: 0.75rem; background: #eef; color: var(--accent);
+  padding: 0.05rem 0.4rem; border-radius: 3px; text-transform: uppercase;
+}
+.block-type .hint { color: var(--muted); font-size: 0.85rem; }
+.block-actions button {
+  background: transparent; border: 1px solid transparent; padding: 0.1rem 0.4rem;
+  border-radius: 3px; cursor: pointer;
+}
+.block-actions button:hover:not(:disabled) { background: #f1f1f3; border-color: var(--border); }
+.block-actions button:disabled { opacity: 0.3; cursor: not-allowed; }
+.block-body { padding: 0.5rem 0.75rem 0.75rem; border-top: 1px solid var(--border); }
+
+.block-form { display: flex; flex-direction: column; gap: 0.5rem; }
+.block-field { display: flex; flex-direction: column; gap: 0.2rem; font-size: 0.85rem; }
+.block-field.row { flex-direction: row; align-items: center; gap: 0.4rem; }
+.block-field input, .block-field select, .block-field textarea {
+  padding: 0.3rem 0.4rem; border: 1px solid var(--border); border-radius: 3px;
+  font: inherit;
+}
+.block-subgroup { padding: 0.4rem 0.6rem; background: #fafafa; border-radius: 3px; }
+.block-subgroup .row { display: flex; gap: 0.3rem; align-items: center; margin: 0.2rem 0; }
+.block-subgroup .row input, .block-subgroup .row select { flex: 1; }
+.block-form .row { display: flex; gap: 0.4rem; align-items: center; }
+
+.block-palette {
+  display: flex; flex-wrap: wrap; gap: 0.3rem; align-items: center;
+  padding: 0.4rem 0.5rem; border: 1px dashed var(--border); border-radius: 4px;
+}
+.block-palette button {
+  font-size: 0.8rem; padding: 0.15rem 0.5rem;
+  border: 1px solid var(--border); background: #fff; border-radius: 3px; cursor: pointer;
+}
+.block-palette button:hover { border-color: var(--accent); color: var(--accent); }
+
+/* Modal */
+.modal-backdrop {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.35);
+  display: flex; align-items: center; justify-content: center; z-index: 50;
+}
+.modal {
+  background: #fff; padding: 1.2rem 1.4rem; border-radius: 6px;
+  min-width: 360px; max-width: 480px; display: flex; flex-direction: column; gap: 0.6rem;
+  box-shadow: 0 10px 40px rgba(0,0,0,0.25);
+}
+.modal h3 { margin: 0 0 0.4rem; }
+.modal label { display: flex; flex-direction: column; gap: 0.2rem; font-size: 0.9rem; }
+.modal label.row { flex-direction: row; align-items: center; gap: 0.4rem; }
+.modal input, .modal select { padding: 0.35rem 0.5rem; border: 1px solid var(--border); border-radius: 3px; font: inherit; }
+.modal-actions { display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 0.6rem; }
+.modal-actions button { padding: 0.4rem 0.9rem; border: 1px solid var(--border); border-radius: 3px; background: #fff; cursor: pointer; }
+.modal-actions button[type="submit"] { background: var(--accent); color: #fff; border-color: var(--accent); }
+.modal .error { color: #c00; font-size: 0.85rem; margin: 0; }
+
+/* Icon-Buttons (lucide-react svg) brauchen flex-Zentrierung */
+.page-actions button, .block-actions button, .prose-toolbar button, .add-page {
+  display: inline-flex; align-items: center; justify-content: center; gap: 0.25rem;
+}
+.block-list-tools {
+  display: flex; gap: 0.4rem; margin-bottom: 0.4rem;
+}
+.block-list-tools button {
+  display: inline-flex; align-items: center; gap: 0.25rem;
+  font-size: 0.75rem; padding: 0.15rem 0.5rem;
+  border: 1px solid var(--border); background: #fff; border-radius: 3px; cursor: pointer;
+  color: var(--muted);
+}
+.block-list-tools button:hover { color: var(--accent); border-color: var(--accent); }
+.block-type {
+  display: inline-flex; align-items: center; gap: 0.4rem;
+}
+
+.inner-block {
+  display: flex; flex-direction: column; gap: 0.3rem;
+  padding: 0.4rem 0.5rem; background: #fff; border: 1px solid var(--border);
+  border-radius: 3px; margin: 0.25rem 0;
+}
+.inner-block .prose-editor { margin-top: 0; }

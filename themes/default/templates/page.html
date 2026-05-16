@@ -21,7 +21,7 @@
 
       {% elif block.type == "text" %}
         <section class="block prose prose--{{ block.style | default(value="default") }}">
-          {{ page.content_html | safe }}
+          {{ block.content_html | safe }}
         </section>
 
       {% elif block.type == "image" %}
@@ -55,7 +55,7 @@
           {% for col in block.columns %}
             <div class="columns__col">
               {% for inner in col %}
-                {% if inner.type == "text" %}<div class="prose">{{ page.content_html | safe }}</div>{% endif %}
+                {% if inner.type == "text" %}<div class="prose">{{ inner.content_html | safe }}</div>{% endif %}
                 {% if inner.type == "image" %}<img src="{{ inner.image }}" alt="">{% endif %}
                 {% if inner.type == "cta" %}<a class="cta__btn" href="{{ inner.href }}">{{ inner.text }}</a>{% endif %}
                 {% if inner.type == "quote" %}<blockquote>{{ inner.text }}</blockquote>{% endif %}

@@ -2,8 +2,8 @@ mod bootstrap;
 mod preview;
 
 use camino::Utf8PathBuf;
-use projectfs::Project;
-use serde::Serialize;
+use projectfs::{PageFrontmatter, Project};
+use serde::{Deserialize, Serialize};
 use std::sync::{Mutex, OnceLock};
 use tauri::Manager;
 
@@ -95,17 +95,83 @@ fn load_page(state: tauri::State<'_, AppState>, slug: String) -> Result<serde_js
     serde_json::to_value(&page).map_err(to_str_err)
 }
 
-#[tauri::command]
-fn save_page_body(
-    state: tauri::State<'_, AppState>,
+#[derive(Deserialize)]
+struct SavePageFullArgs {
     slug: String,
+    frontmatter: PageFrontmatter,
     body: String,
+}
+
+#[tauri::command]
+fn save_page_full(
+    state: tauri::State<'_, AppState>,
+    args: SavePageFullArgs,
 ) -> Result<serde_json::Value, String> {
     let guard = state.project.lock().unwrap();
     let project = guard.as_ref().ok_or_else(|| "no project open".to_string())?;
-    project.save_page_body(&slug, &body).map_err(to_str_err)?;
-    let page = project.load_page(&slug).map_err(to_str_err)?;
+    project
+        .save_page_full(&args.slug, &args.frontmatter, &args.body)
+        .map_err(to_str_err)?;
+    let page = project.load_page(&args.slug).map_err(to_str_err)?;
     serde_json::to_value(&page).map_err(to_str_err)
+}
+
+#[derive(Deserialize)]
+struct CreatePageArgs {
+    slug: String,
+    frontmatter: PageFrontmatter,
+    #[serde(default)]
+    body: String,
+}
+
+#[tauri::command]
+fn create_page(
+    state: tauri::State<'_, AppState>,
+    args: CreatePageArgs,
+) -> Result<Vec<PageSummary>, String> {
+    let guard = state.project.lock().unwrap();
+    let project = guard.as_ref().ok_or_else(|| "no project open".to_string())?;
+    project
+        .create_page(&args.slug, &args.frontmatter, &args.body)
+        .map_err(to_str_err)?;
+    list_page_summaries(project)
+}
+
+#[tauri::command]
+fn rename_page(
+    state: tauri::State<'_, AppState>,
+    old_slug: String,
+    new_slug: String,
+) -> Result<Vec<PageSummary>, String> {
+    let guard = state.project.lock().unwrap();
+    let project = guard.as_ref().ok_or_else(|| "no project open".to_string())?;
+    project.rename_page(&old_slug, &new_slug).map_err(to_str_err)?;
+    list_page_summaries(project)
+}
+
+#[tauri::command]
+fn delete_page(
+    state: tauri::State<'_, AppState>,
+    slug: String,
+) -> Result<Vec<PageSummary>, String> {
+    let guard = state.project.lock().unwrap();
+    let project = guard.as_ref().ok_or_else(|| "no project open".to_string())?;
+    project.delete_page(&slug).map_err(to_str_err)?;
+    list_page_summaries(project)
+}
+
+fn list_page_summaries(project: &Project) -> Result<Vec<PageSummary>, String> {
+    Ok(project
+        .list_pages()
+        .map_err(to_str_err)?
+        .into_iter()
+        .map(|p| PageSummary {
+            slug: p.slug,
+            title: p.frontmatter.title,
+            visible: p.frontmatter.visible,
+            template: p.frontmatter.template,
+        })
+        .collect())
 }
 
 #[tauri::command]
@@ -170,7 +236,10 @@ pub fn run() {
             bootstrap_example,
             open_project,
             load_page,
-            save_page_body,
+            save_page_full,
+            create_page,
+            rename_page,
+            delete_page,
             build_site,
             preview_url,
             open_in_browser,

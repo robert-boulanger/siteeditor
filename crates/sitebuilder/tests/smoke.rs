@@ -21,7 +21,7 @@ fn bootstrap_and_build() {
     );
     write(
         &root.join("pages/index.md"),
-        "---\ntitle: Home\ntemplate: index\nvisible: true\nmenu:\n  show: true\n  order: 1\nblocks:\n  - type: hero\n    headline: Hi\n  - type: text\n---\n# Hello\n",
+        "---\ntitle: Home\ntemplate: index\nvisible: true\nmenu:\n  show: true\n  order: 1\nblocks:\n  - type: hero\n    headline: Hi\n  - type: text\n    content: \"# Hello\"\n---\n",
     );
 
     let theme = root.join("themes/default");

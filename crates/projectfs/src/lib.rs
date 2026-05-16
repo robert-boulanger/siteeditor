@@ -151,24 +151,134 @@ impl Project {
         load_page_file(&path, slug.to_string())
     }
 
-    /// Tauscht den Body einer existierenden Page aus, ohne Frontmatter zu
-    /// verändern. Schreibt atomar (tmp + rename) und legt die Vorgängerversion
-    /// als Backup ab.
-    pub fn save_page_body(&self, slug: &str, new_body: &str) -> Result<(), ProjectError> {
+    /// Schreibt Frontmatter UND Body neu. Verwendet, wenn Blocks oder
+    /// Metadaten geändert wurden. Frontmatter wird aus dem strukturierten
+    /// `PageFrontmatter` serialisiert; Reihenfolge der YAML-Felder folgt
+    /// damit der Struct-Definition (nicht byte-genau zur Vorversion).
+    pub fn save_page_full(
+        &self,
+        slug: &str,
+        frontmatter: &PageFrontmatter,
+        new_body: &str,
+    ) -> Result<(), ProjectError> {
+        if !is_safe_slug(slug) {
+            return Err(ProjectError::InvalidPage {
+                path: slug.to_string(),
+                reason: "slug enthält unerlaubte Zeichen".into(),
+            });
+        }
         let path = self.pages_dir().join(format!("{slug}.md"));
-        let raw = std::fs::read_to_string(&path)?;
-        let (frontmatter, _old_body) = split_frontmatter(&raw).map_err(|e| {
-            ProjectError::InvalidPage {
+        if !path.exists() {
+            return Err(ProjectError::InvalidPage {
                 path: path.to_string(),
-                reason: e,
-            }
+                reason: "page existiert nicht — erst create_page aufrufen".into(),
+            });
+        }
+        let raw = std::fs::read_to_string(&path)?;
+        let fm_yaml = serde_yaml::to_string(frontmatter).map_err(|e| ProjectError::InvalidPage {
+            path: path.to_string(),
+            reason: format!("frontmatter serialise: {e}"),
         })?;
-        let assembled = assemble_page(&frontmatter, new_body);
+        let assembled = assemble_page(fm_yaml.trim_end_matches('\n'), new_body);
 
         backup_file(&self.root, slug, &raw)?;
         atomic_write(&path, &assembled)?;
         Ok(())
     }
+
+    /// Legt eine neue Page an. Schlägt fehl, wenn `slug` bereits existiert.
+    pub fn create_page(
+        &self,
+        slug: &str,
+        frontmatter: &PageFrontmatter,
+        body: &str,
+    ) -> Result<(), ProjectError> {
+        if !is_safe_slug(slug) {
+            return Err(ProjectError::InvalidPage {
+                path: slug.to_string(),
+                reason: "slug enthält unerlaubte Zeichen".into(),
+            });
+        }
+        let path = self.pages_dir().join(format!("{slug}.md"));
+        if path.exists() {
+            return Err(ProjectError::InvalidPage {
+                path: path.to_string(),
+                reason: "page existiert bereits".into(),
+            });
+        }
+        let fm_yaml = serde_yaml::to_string(frontmatter).map_err(|e| ProjectError::InvalidPage {
+            path: path.to_string(),
+            reason: format!("frontmatter serialise: {e}"),
+        })?;
+        let assembled = assemble_page(fm_yaml.trim_end_matches('\n'), body);
+        atomic_write(&path, &assembled)?;
+        Ok(())
+    }
+
+    /// Benennt eine Page um. Schlägt fehl, wenn das Ziel existiert oder die
+    /// Quelle fehlt. Backups des alten Slugs werden mit verschoben.
+    pub fn rename_page(&self, old_slug: &str, new_slug: &str) -> Result<(), ProjectError> {
+        if !is_safe_slug(new_slug) {
+            return Err(ProjectError::InvalidPage {
+                path: new_slug.to_string(),
+                reason: "slug enthält unerlaubte Zeichen".into(),
+            });
+        }
+        if old_slug == new_slug {
+            return Ok(());
+        }
+        let old_path = self.pages_dir().join(format!("{old_slug}.md"));
+        let new_path = self.pages_dir().join(format!("{new_slug}.md"));
+        if !old_path.exists() {
+            return Err(ProjectError::InvalidPage {
+                path: old_path.to_string(),
+                reason: "alte page existiert nicht".into(),
+            });
+        }
+        if new_path.exists() {
+            return Err(ProjectError::InvalidPage {
+                path: new_path.to_string(),
+                reason: "ziel-slug existiert bereits".into(),
+            });
+        }
+        std::fs::rename(&old_path, &new_path)?;
+
+        // Backups mitziehen
+        let old_backup = self.root.join(".siteeditor/backups").join(old_slug);
+        let new_backup = self.root.join(".siteeditor/backups").join(new_slug);
+        if old_backup.exists() && !new_backup.exists() {
+            std::fs::rename(&old_backup, &new_backup)?;
+        }
+        Ok(())
+    }
+
+    /// Löscht eine Page. Backups verbleiben unter `.siteeditor/backups/<slug>/`
+    /// zur Wiederherstellung.
+    pub fn delete_page(&self, slug: &str) -> Result<(), ProjectError> {
+        let path = self.pages_dir().join(format!("{slug}.md"));
+        if !path.exists() {
+            return Err(ProjectError::InvalidPage {
+                path: path.to_string(),
+                reason: "page existiert nicht".into(),
+            });
+        }
+        // Letzte Version noch einmal sichern, dann löschen.
+        if let Ok(raw) = std::fs::read_to_string(&path) {
+            let _ = backup_file(&self.root, slug, &raw);
+        }
+        std::fs::remove_file(&path)?;
+        Ok(())
+    }
+}
+
+/// Slug-Sicherheit: keine Pfad-Trenner, keine `..`, kein Leerstring.
+/// Strenge Slug-Regeln (Kebab-Case) prüft `theme_contract::is_valid_slug`.
+fn is_safe_slug(slug: &str) -> bool {
+    !slug.is_empty()
+        && !slug.contains('/')
+        && !slug.contains('\\')
+        && !slug.contains("..")
+        && !slug.starts_with('.')
 }
 
 fn assemble_page(frontmatter: &str, body: &str) -> String {
@@ -290,28 +400,19 @@ mod tests {
         (tmp, project)
     }
 
-    #[test]
-    fn save_page_body_preserves_frontmatter_bytewise() {
-        // Frontmatter mit ungewöhnlicher (aber gültiger) Quoting/Reihenfolge,
-        // die ein Roundtrip durch serde_yaml zerschießen würde.
-        let original = "---\ntitle: \"Hi\"\nvisible: true\nmenu:\n  show: true\n  order:  7\n---\nold body\n";
-        let (_tmp, project) = make_project_with_page(original);
+    // --- save_page_full / create / rename / delete --------------------------
 
-        project.save_page_body("index", "new body\n").unwrap();
-
-        let written = std::fs::read_to_string(project.pages_dir().join("index.md")).unwrap();
-        let (fm, body) = split_frontmatter(&written).unwrap();
-        // Frontmatter byte-genau identisch zum Original
-        let (orig_fm, _) = split_frontmatter(original).unwrap();
-        assert_eq!(fm, orig_fm, "frontmatter changed byte-wise");
-        assert_eq!(body, "new body\n");
+    fn fm(title: &str) -> PageFrontmatter {
+        PageFrontmatter {
+            title: title.into(),
+            ..Default::default()
+        }
     }
 
     #[test]
-    fn save_page_body_is_atomic_no_tmp_left() {
-        let (_tmp, project) = make_project_with_page("---\ntitle: T\n---\nbody\n");
-        project.save_page_body("index", "x").unwrap();
-        // kein verwaister .tmp-File
+    fn save_page_full_is_atomic_no_tmp_left() {
+        let (_tmp, project) = make_project_with_page("---\ntitle: T\n---\n\n");
+        project.save_page_full("index", &fm("X"), "").unwrap();
         let leftovers: Vec<_> = std::fs::read_dir(project.pages_dir())
             .unwrap()
             .filter_map(|e| e.ok())
@@ -321,28 +422,114 @@ mod tests {
     }
 
     #[test]
-    fn save_page_body_rotates_backups_keeping_last_10() {
-        let (_tmp, project) = make_project_with_page("---\ntitle: T\n---\nv0\n");
-        // Backup-Verzeichnis mit 15 alten Einträgen vorbefüllen.
+    fn save_page_full_rotates_backups_keeping_last_10() {
+        let (_tmp, project) = make_project_with_page("---\ntitle: T\n---\n\n");
         let backup_dir = project.root.join(".siteeditor/backups/index");
         std::fs::create_dir_all(&backup_dir).unwrap();
         for i in 0..15u32 {
             std::fs::write(backup_dir.join(format!("{i:010}.md")), format!("old-{i}")).unwrap();
         }
-        // Ein save_page_body löst die Rotation aus.
-        project.save_page_body("index", "neu\n").unwrap();
-
+        project.save_page_full("index", &fm("X"), "").unwrap();
         let count = std::fs::read_dir(&backup_dir).unwrap().count();
         assert!(count <= 10, "backup rotation kept {count} files (>10)");
-        // Die ältesten Einträge müssen entfernt sein, der jüngste alte Eintrag bleibt.
-        assert!(!backup_dir.join("0000000000.md").exists(), "ältester Backup nicht rotiert");
-        assert!(backup_dir.join("0000000014.md").exists(), "jüngster vorbefüllter Backup wurde verworfen");
+        assert!(!backup_dir.join("0000000000.md").exists());
+        assert!(backup_dir.join("0000000014.md").exists());
     }
 
     #[test]
-    fn save_page_body_rejects_missing_page() {
+    fn save_page_full_rewrites_frontmatter_and_body() {
+        let (_tmp, project) = make_project_with_page("---\ntitle: Old\n---\nold body\n");
+        let mut new_fm = fm("New Title");
+        new_fm.visible = false;
+        new_fm.blocks = vec![serde_json::json!({"type": "text"})];
+
+        project.save_page_full("index", &new_fm, "new body\n").unwrap();
+
+        let reloaded = project.load_page("index").unwrap();
+        assert_eq!(reloaded.frontmatter.title, "New Title");
+        assert!(!reloaded.frontmatter.visible);
+        assert_eq!(reloaded.frontmatter.blocks.len(), 1);
+        assert_eq!(reloaded.body_markdown, "new body\n");
+    }
+
+    #[test]
+    fn save_page_full_rejects_missing_page() {
         let (_tmp, project) = make_project_with_page("---\ntitle: T\n---\nbody\n");
-        let err = project.save_page_body("does-not-exist", "x").unwrap_err();
-        matches!(err, ProjectError::Io(_));
+        let err = project.save_page_full("ghost", &fm("X"), "").unwrap_err();
+        match err {
+            ProjectError::InvalidPage { reason, .. } => assert!(reason.contains("existiert nicht")),
+            other => panic!("unerwarteter Fehler: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn save_page_full_rejects_unsafe_slug() {
+        let (_tmp, project) = make_project_with_page("---\ntitle: T\n---\nbody\n");
+        for bad in ["../etc", "a/b", "..", ".hidden", ""] {
+            let err = project.save_page_full(bad, &fm("X"), "").unwrap_err();
+            assert!(matches!(err, ProjectError::InvalidPage { .. }), "slug {bad} sollte abgelehnt werden");
+        }
+    }
+
+    #[test]
+    fn create_page_writes_and_rejects_existing() {
+        let (_tmp, project) = make_project_with_page("---\ntitle: Home\n---\nbody\n");
+        project.create_page("about", &fm("Über uns"), "Hallo\n").unwrap();
+        let p = project.load_page("about").unwrap();
+        assert_eq!(p.frontmatter.title, "Über uns");
+        assert_eq!(p.body_markdown, "Hallo\n");
+
+        let err = project.create_page("about", &fm("X"), "").unwrap_err();
+        match err {
+            ProjectError::InvalidPage { reason, .. } => assert!(reason.contains("existiert bereits")),
+            other => panic!("unerwarteter Fehler: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rename_page_moves_file_and_backups() {
+        let (_tmp, project) = make_project_with_page("---\ntitle: T\n---\n\n");
+        // einen Backup anlegen (save_page_full → backup_file)
+        project.save_page_full("index", &fm("T2"), "").unwrap();
+        let old_backup_dir = project.root.join(".siteeditor/backups/index");
+        assert!(old_backup_dir.exists());
+
+        project.rename_page("index", "home").unwrap();
+        assert!(!project.pages_dir().join("index.md").exists());
+        assert!(project.pages_dir().join("home.md").exists());
+        assert!(!old_backup_dir.exists());
+        assert!(project.root.join(".siteeditor/backups/home").exists());
+    }
+
+    #[test]
+    fn rename_page_rejects_target_collision() {
+        let (_tmp, project) = make_project_with_page("---\ntitle: T\n---\nbody\n");
+        project.create_page("about", &fm("A"), "").unwrap();
+        let err = project.rename_page("index", "about").unwrap_err();
+        match err {
+            ProjectError::InvalidPage { reason, .. } => assert!(reason.contains("existiert bereits")),
+            other => panic!("unerwarteter Fehler: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rename_page_same_slug_is_noop() {
+        let (_tmp, project) = make_project_with_page("---\ntitle: T\n---\nbody\n");
+        project.rename_page("index", "index").unwrap();
+        assert!(project.pages_dir().join("index.md").exists());
+    }
+
+    #[test]
+    fn delete_page_removes_file_and_keeps_backup() {
+        let (_tmp, project) = make_project_with_page("---\ntitle: T\n---\nbody\n");
+        project.delete_page("index").unwrap();
+        assert!(!project.pages_dir().join("index.md").exists());
+        // letzte Version liegt als Backup
+        let backup_dir = project.root.join(".siteeditor/backups/index");
+        assert!(backup_dir.exists());
+        assert!(std::fs::read_dir(&backup_dir).unwrap().count() >= 1);
+
+        let err = project.delete_page("index").unwrap_err();
+        assert!(matches!(err, ProjectError::InvalidPage { .. }));
     }
 }
