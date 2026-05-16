@@ -3,6 +3,7 @@
 //! Phase 04 MVP — `open()`, `list_pages()`, `load_page()` für Smoke-Test.
 
 use camino::{Utf8Path, Utf8PathBuf};
+use deploy_contract::DeployProfile;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use thiserror::Error;
@@ -41,6 +42,11 @@ pub struct SiteManifest {
     pub menu_order: Vec<String>,
     #[serde(default)]
     pub css_var_overrides: BTreeMap<String, String>,
+    /// Phase 10: Deployment-Profile (Staging/Prod/…). Credentials liegen
+    /// NICHT hier, sondern im OS-Keystore (Service-Name siehe
+    /// [`Project::keystore_service_for`]).
+    #[serde(default)]
+    pub deploy_profiles: Vec<DeployProfile>,
 }
 
 /// Frontmatter einer Page-Markdown-Datei.
@@ -235,11 +241,7 @@ impl Project {
         }
         let mut new_manifest = self.manifest.clone();
         new_manifest.active_theme = slug.to_string();
-        let serialized = serde_json::to_string_pretty(&new_manifest)
-            .map_err(|e| ProjectError::InvalidSiteJson(e.to_string()))?;
-        atomic_write(&self.root.join("site.json"), &serialized)?;
-        self.manifest = new_manifest;
-        Ok(())
+        self.persist_manifest(new_manifest)
     }
 
     /// Listet alle Pages rekursiv unter `pages/`. Der Slug entspricht dem
@@ -622,6 +624,78 @@ impl Project {
             });
         }
         std::fs::remove_file(&target_canon)?;
+        Ok(())
+    }
+
+    // --- Phase 10: Deploy-Profile ---------------------------------------
+
+    /// Service-Name fürs OS-Keystore — eindeutig pro (Projekt-Root, Profil).
+    /// Format: `siteeditor.deploy.<project_hash>.<profile_name>`.
+    /// Der Hash macht Projekte mit gleichem Profilnamen ungefährlich
+    /// (z.B. zwei lokale Kopien desselben Repos).
+    pub fn keystore_service_for(&self, profile_name: &str) -> String {
+        use sha2::{Digest, Sha256};
+        let mut h = Sha256::new();
+        h.update(self.root.as_str().as_bytes());
+        let digest = h.finalize();
+        let mut hex = String::with_capacity(16);
+        for b in &digest[..8] {
+            use std::fmt::Write as _;
+            let _ = write!(hex, "{b:02x}");
+        }
+        format!("siteeditor.deploy.{hex}.{profile_name}")
+    }
+
+    /// Alle gespeicherten Profile (ohne Credentials). Klont aus dem
+    /// in-memory-Manifest.
+    pub fn list_deploy_profiles(&self) -> Vec<DeployProfile> {
+        self.manifest.deploy_profiles.clone()
+    }
+
+    pub fn get_deploy_profile(&self, name: &str) -> Option<DeployProfile> {
+        self.manifest
+            .deploy_profiles
+            .iter()
+            .find(|p| p.name == name)
+            .cloned()
+    }
+
+    /// Legt ein neues Profil an oder ersetzt ein gleichnamiges. Validiert
+    /// das Profil vor dem Schreiben. Persistiert `site.json`.
+    pub fn upsert_deploy_profile(&mut self, profile: DeployProfile) -> Result<(), ProjectError> {
+        profile.validate().map_err(|e| ProjectError::InvalidSiteJson(e.to_string()))?;
+        let mut new_manifest = self.manifest.clone();
+        if let Some(existing) = new_manifest
+            .deploy_profiles
+            .iter_mut()
+            .find(|p| p.name == profile.name)
+        {
+            *existing = profile;
+        } else {
+            new_manifest.deploy_profiles.push(profile);
+        }
+        // sortiert speichern → stabile JSON-Reihenfolge
+        new_manifest.deploy_profiles.sort_by(|a, b| a.name.cmp(&b.name));
+        self.persist_manifest(new_manifest)
+    }
+
+    /// Entfernt ein Profil per Name. Kein Fehler, wenn das Profil nicht
+    /// existiert — Caller braucht keine Vorab-Prüfung.
+    pub fn delete_deploy_profile(&mut self, name: &str) -> Result<(), ProjectError> {
+        let mut new_manifest = self.manifest.clone();
+        let before = new_manifest.deploy_profiles.len();
+        new_manifest.deploy_profiles.retain(|p| p.name != name);
+        if new_manifest.deploy_profiles.len() == before {
+            return Ok(());
+        }
+        self.persist_manifest(new_manifest)
+    }
+
+    fn persist_manifest(&mut self, new_manifest: SiteManifest) -> Result<(), ProjectError> {
+        let serialized = serde_json::to_string_pretty(&new_manifest)
+            .map_err(|e| ProjectError::InvalidSiteJson(e.to_string()))?;
+        atomic_write(&self.root.join("site.json"), &serialized)?;
+        self.manifest = new_manifest;
         Ok(())
     }
 
@@ -1328,6 +1402,107 @@ mod tests {
         for bad in ["", "/", "/abs", "trail/", "..", "../etc", "a/../b", "a/./b", "a//b", ".hidden", "a/.hidden", "a\\b"] {
             assert!(!is_safe_slug(bad), "slug {bad:?} sollte abgelehnt werden");
         }
+    }
+
+    // --- Phase 10: deploy-Profile -------------------------------------------
+
+    use deploy_contract::{AuthMethod, Protocol};
+
+    fn sftp_profile(name: &str) -> DeployProfile {
+        DeployProfile {
+            name: name.into(),
+            protocol: Protocol::Sftp,
+            host: "example.com".into(),
+            port: 22,
+            auth: AuthMethod::Password { user: "deploy".into() },
+            remote_path: "/var/www/site".into(),
+            branch: None,
+            prefer_diff: true,
+        }
+    }
+
+    #[test]
+    fn neues_projekt_hat_keine_deploy_profile() {
+        let (_tmp, project) = make_project_with_page("---\ntitle: T\n---\n\n");
+        assert!(project.list_deploy_profiles().is_empty());
+    }
+
+    #[test]
+    fn upsert_legt_profil_an_und_persistiert_ohne_credentials() {
+        let (_tmp, mut project) = make_project_with_page("---\ntitle: T\n---\n\n");
+        project.upsert_deploy_profile(sftp_profile("prod")).unwrap();
+        assert_eq!(project.list_deploy_profiles().len(), 1);
+
+        // beim Reload weiterhin da
+        let reopened = Project::open(&project.root).unwrap();
+        assert_eq!(reopened.manifest.deploy_profiles.len(), 1);
+        assert_eq!(reopened.manifest.deploy_profiles[0].name, "prod");
+
+        // site.json enthält KEIN Passwort-Feld
+        let raw = std::fs::read_to_string(project.root.join("site.json")).unwrap();
+        assert!(!raw.to_lowercase().contains("password\":"), "site.json darf kein Passwort enthalten: {raw}");
+        assert!(!raw.to_lowercase().contains("secret"), "site.json darf kein Secret enthalten: {raw}");
+    }
+
+    #[test]
+    fn upsert_ersetzt_gleichnamiges_profil() {
+        let (_tmp, mut project) = make_project_with_page("---\ntitle: T\n---\n\n");
+        project.upsert_deploy_profile(sftp_profile("prod")).unwrap();
+        let mut updated = sftp_profile("prod");
+        updated.host = "neuer-host.example".into();
+        project.upsert_deploy_profile(updated).unwrap();
+        let profiles = project.list_deploy_profiles();
+        assert_eq!(profiles.len(), 1);
+        assert_eq!(profiles[0].host, "neuer-host.example");
+    }
+
+    #[test]
+    fn upsert_sortiert_nach_name() {
+        let (_tmp, mut project) = make_project_with_page("---\ntitle: T\n---\n\n");
+        project.upsert_deploy_profile(sftp_profile("staging")).unwrap();
+        project.upsert_deploy_profile(sftp_profile("prod")).unwrap();
+        project.upsert_deploy_profile(sftp_profile("dev")).unwrap();
+        let names: Vec<_> = project
+            .list_deploy_profiles()
+            .into_iter()
+            .map(|p| p.name)
+            .collect();
+        assert_eq!(names, vec!["dev", "prod", "staging"]);
+    }
+
+    #[test]
+    fn upsert_lehnt_invalide_profile_ab() {
+        let (_tmp, mut project) = make_project_with_page("---\ntitle: T\n---\n\n");
+        let mut bad = sftp_profile("ok");
+        bad.host = "".into();
+        let err = project.upsert_deploy_profile(bad).unwrap_err();
+        assert!(matches!(err, ProjectError::InvalidSiteJson(_)));
+        // Original-Manifest unverändert
+        assert!(project.list_deploy_profiles().is_empty());
+    }
+
+    #[test]
+    fn delete_entfernt_und_ist_idempotent() {
+        let (_tmp, mut project) = make_project_with_page("---\ntitle: T\n---\n\n");
+        project.upsert_deploy_profile(sftp_profile("prod")).unwrap();
+        project.delete_deploy_profile("prod").unwrap();
+        assert!(project.list_deploy_profiles().is_empty());
+        // zweimal löschen ist ok
+        project.delete_deploy_profile("prod").unwrap();
+    }
+
+    #[test]
+    fn keystore_service_ist_projekt_spezifisch_und_stabil() {
+        let (_tmp_a, project_a) = make_project_with_page("---\ntitle: T\n---\n\n");
+        let (_tmp_b, project_b) = make_project_with_page("---\ntitle: T\n---\n\n");
+
+        let a1 = project_a.keystore_service_for("prod");
+        let a2 = project_a.keystore_service_for("prod");
+        let b1 = project_b.keystore_service_for("prod");
+        assert_eq!(a1, a2, "Service-Name muss stabil sein");
+        assert_ne!(a1, b1, "verschiedene Projekt-Roots → verschiedene Service-Namen");
+        assert!(a1.starts_with("siteeditor.deploy."));
+        assert!(a1.ends_with(".prod"));
     }
 
     #[test]

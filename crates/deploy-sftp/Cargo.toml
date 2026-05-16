@@ -1,5 +1,5 @@
 [package]
-name = "projectfs"
+name = "deploy-sftp"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -7,14 +7,16 @@ authors.workspace = true
 
 [dependencies]
 serde.workspace = true
-serde_json.workspace = true
 thiserror.workspace = true
 camino.workspace = true
 tracing.workspace = true
-serde_yaml = "0.9"
-walkdir = "2"
 deploy-contract.workspace = true
-sha2.workspace = true
+
+# Pure-Rust SSH/SFTP (kein OpenSSL).
+russh = "0.60"
+russh-sftp = "2"
+tokio = { version = "1", features = ["rt", "macros", "io-util", "fs", "net", "time", "sync"] }
+bytes = "1"
 
 [dev-dependencies]
 tempfile = "3"

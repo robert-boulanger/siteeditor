@@ -1,4 +1,6 @@
 mod bootstrap;
+mod deploy_commands;
+mod keystore;
 mod preview;
 
 use camino::Utf8PathBuf;
@@ -397,6 +399,12 @@ pub fn run() {
             build_site,
             preview_url,
             open_in_browser,
+            deploy_commands::deploy_list_profiles,
+            deploy_commands::deploy_save_profile,
+            deploy_commands::deploy_delete_profile,
+            deploy_commands::deploy_has_secret,
+            deploy_commands::deploy_dry_run,
+            deploy_commands::deploy_run,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

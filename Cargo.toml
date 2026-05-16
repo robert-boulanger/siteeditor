@@ -5,6 +5,8 @@ members = [
     "crates/projectfs",
     "crates/theme-contract",
     "crates/sitebuilder",
+    "crates/deploy-contract",
+    "crates/deploy-sftp",
 ]
 
 [workspace.package]
@@ -27,3 +29,9 @@ pulldown-cmark = "0.12"
 projectfs = { path = "crates/projectfs" }
 theme-contract = { path = "crates/theme-contract" }
 sitebuilder = { path = "crates/sitebuilder" }
+deploy-contract = { path = "crates/deploy-contract" }
+deploy-sftp = { path = "crates/deploy-sftp" }
+
+# Phase 10 — Deployment
+sha2 = "0.10"
+walkdir = "2"

@@ -43,3 +43,6 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Claude Code (worktrees, lokaler agent-state) — nicht ins repo.
+.claude/

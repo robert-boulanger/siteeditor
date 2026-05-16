@@ -14,7 +14,7 @@ Theme produzieren kann.
 - Ein Theme ist ein eigenständiges Verzeichnis unter `themes/<slug>/`.
 - Pflichtdateien: `theme.json`, `styles/main.css`, `templates/page.html`,
   `templates/index.html`, `templates/404.html`, `templates/partials/head.html`,
-  `templates/partials/menu.html`.
+  `templates/partials/menu.html`, `templates/partials/_menu_macros.html`.
 - **Keine Inheritance.** Jedes Theme ist vollständig. Startpunkt:
   `themes/default/` kopieren.
 - HTML-Struktur (Tag-Wahl, Block-Schleife, Variablen) **darf nicht
@@ -65,7 +65,8 @@ themes/<slug>/
     ├── 404.html
     └── partials/
         ├── head.html
-        └── menu.html
+        ├── menu.html
+        └── _menu_macros.html
 ```
 
 Zusätzliche Assets (Hintergrundbilder, Fonts, Icons) gehören unter
@@ -187,6 +188,80 @@ Wrapper: `<blockquote class="block quote">`
 |---|---|
 | `<p>` Zitattext | `.quote__text` |
 | `<cite>` Quelle | `.quote__cite` |
+
+## Navigation (Hamburger + hierarchisches Menü)
+
+Pages können verschachtelt sein (`pages/about.md` + `pages/about/team.md` →
+parent/child). Das Menü rendert diese Hierarchie **rekursiv** über ein
+Tera-Macro — dafür gibt es die Pflichtdatei
+`templates/partials/_menu_macros.html`. Ein Theme darf das CSS frei
+gestalten, aber Markup-Struktur und Klassen sind Vertrag.
+
+### `_menu_macros.html` (Pflicht, wörtlich übernehmen)
+
+```jinja
+{% macro menu_list(items, depth) %}
+  <ul class="nav-list nav-list--depth-{{ depth }}">
+    {% for item in items %}
+      <li class="nav-item{% if item.slug == page.slug %} is-active{% endif %}{% if item.children %} has-children{% endif %}">
+        <a class="nav-link" href="{{ item.url | safe }}">{{ item.title }}</a>
+        {% if item.children %}
+          {{ self::menu_list(items=item.children, depth=depth + 1) }}
+        {% endif %}
+      </li>
+    {% endfor %}
+  </ul>
+{% endmacro menu_list %}
+```
+
+Rekursion über `self::menu_list(...)` — kein Tiefen-Limit, alle Levels.
+
+### `menu.html` (Hamburger-Pattern, ohne JS)
+
+```jinja
+{% import "partials/_menu_macros.html" as nav %}
+<input type="checkbox" id="nav-toggle" class="nav-toggle" aria-hidden="true">
+<label for="nav-toggle" class="nav-burger" aria-label="Menü öffnen/schließen">
+  <span></span><span></span><span></span>
+</label>
+<nav class="site-nav" aria-label="Hauptnavigation">
+  {{ nav::menu_list(items=site.menu, depth=0) }}
+</nav>
+```
+
+Der Checkbox-Hack (`#nav-toggle:checked ~ .site-nav { … }`) öffnet/
+schließt das Menü auf Mobile ohne JavaScript.
+
+### Reservierte Klassen (Public-API)
+
+| Klasse | Zweck |
+|---|---|
+| `.nav-toggle` | versteckte Checkbox, steuert Open-State (Mobile) |
+| `.nav-burger` | sichtbares `<label>` mit den drei Strichen |
+| `.site-nav` | Wrapper-`<nav>` um die Top-Level-Liste |
+| `.nav-list` | jede `<ul>` der Hierarchie |
+| `.nav-list--depth-N` | Tiefen-Modifier (`0` = Top-Level, `1+` = Submenüs) |
+| `.nav-item` | jedes `<li>` |
+| `.nav-link` | jedes `<a>` |
+| `.has-children` | `<li>`, das ein Submenü öffnet (Dropdown-Hook) |
+| `.is-active` | `<li>` der aktiven Seite |
+
+### Empfohlene CSS-Patterns
+
+- **Mobile (≤ Tablet-Breakpoint):** `.site-nav` standardmäßig
+  ausgeblendet (`display: none` oder `max-height: 0`), durch
+  `.nav-toggle:checked ~ .site-nav { display: block }` öffnen.
+  `.nav-burger` nur hier sichtbar.
+- **Desktop:** `.nav-burger` und `.nav-toggle` ausblenden, `.site-nav`
+  immer sichtbar. Top-Level `.nav-list--depth-0` horizontal flexen.
+- **Dropdowns auf Desktop:** Subnav (`.nav-list--depth-1+`) absolut
+  positioniert unter `.has-children`. Öffnen über `:hover` **und**
+  `:focus-within` (Tastatur-Zugänglichkeit). Zwischen Trigger-Link und
+  Dropdown **keinen Gap lassen**, sonst schließt das Hover beim
+  Übergang — entweder mit `padding-bottom` am `<li>` oder mit einem
+  unsichtbaren `::before` überbrücken.
+- `is-active` bekommt einen sichtbaren State (Farbe, Underline) — auch
+  in Submenüs.
 
 ## Responsive
 

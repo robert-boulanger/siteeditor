@@ -22,12 +22,26 @@ tauri-plugin-dialog = "2"
 serde.workspace = true
 serde_json.workspace = true
 anyhow.workspace = true
+thiserror.workspace = true
 tracing.workspace = true
 camino.workspace = true
 
 projectfs.workspace = true
 theme-contract.workspace = true
 sitebuilder.workspace = true
+deploy-contract.workspace = true
+deploy-sftp.workspace = true
+
+# Phase 10 — Cross-platform Credential-Storage.
+# In keyring v3 sind die OS-Backends OPT-IN: ohne diese Features
+# fällt die Crate auf einen Mock-Backend zurück, der nichts persistiert
+# (jedes `Entry::new` liefert einen frischen Eintrag → store_secret
+# schreibt, load_secret findet nichts).
+keyring = { version = "3", features = [
+    "apple-native",
+    "windows-native",
+    "sync-secret-service",
+] }
 
 axum = "0.7"
 tokio = { version = "1", features = ["full"] }

@@ -190,6 +190,22 @@ fn menu_rendert_hierarchisch_mit_nested_nav_list() {
 }
 
 #[test]
+fn menu_partial_importiert_macros_datei() {
+    // Vertrag: `partials/menu.html` MUSS das Macro-Partial importieren.
+    // Wer den Import wegrefactort, zerbricht die Rekursion auf Tiefe ≥ 1
+    // ohne dass es im gerenderten HTML einer flachen Page auffällt.
+    let src = include_str!("../../../themes/default/templates/partials/menu.html");
+    assert!(
+        src.contains("import \"partials/_menu_macros.html\""),
+        "menu.html muss `_menu_macros.html` importieren, ist aber:\n{src}"
+    );
+    assert!(
+        src.contains("menu_list("),
+        "menu.html muss `menu_list(...)` aufrufen, ist aber:\n{src}"
+    );
+}
+
+#[test]
 fn head_verlinkt_vars_css_vor_main_css() {
     // Regression: `_vars.css` (Theme-CSS-Variablen) wurde erzeugt, aber nie
     // ins HTML eingebunden. Folge: `var(--font-body)` undefined → Browser

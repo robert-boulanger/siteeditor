@@ -3,11 +3,13 @@ import { useStore } from "./store";
 import type { Block, PageFrontmatter, ThemeInfo } from "./store";
 import { open as openDialog, save as saveDialog, ask } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
-import { Plus } from "lucide-react";
+import { Plus, FolderOpen, FolderPlus, Save, Hammer, UploadCloud, Settings } from "lucide-react";
 import { BlockList } from "./components/blocks/BlockList";
 import { NewPageDialog } from "./components/NewPageDialog";
 import { RenamePageDialog } from "./components/RenamePageDialog";
 import { ThemeCssEditor } from "./components/ThemeCssEditor";
+import { SettingsModal } from "./components/SettingsModal";
+import { DeployModal } from "./components/DeployModal";
 import { PageTree, buildPageTree } from "./components/PageTree";
 import { SidebarSplitter, loadSidebarWidth } from "./components/SidebarSplitter";
 import "./App.css";
@@ -26,6 +28,8 @@ function App() {
   const [renameSlug, setRenameSlug] = useState<string | null>(null);
   const [themes, setThemes] = useState<ThemeInfo[]>([]);
   const [cssEditorOpen, setCssEditorOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [deployOpen, setDeployOpen] = useState(false);
 
   useEffect(() => {
     const w = loadSidebarWidth();
@@ -144,18 +148,63 @@ function App() {
       <header className="app-header">
         <h1>siteeditor</h1>
         <div className="actions">
-          <button onClick={pickBootstrapTarget} disabled={busy}>Beispielprojekt erzeugen</button>
-          <button onClick={pickProjectFolder} disabled={busy}>Projekt öffnen…</button>
           <button
-            className="save-btn"
+            className="icon-btn"
+            onClick={pickBootstrapTarget}
+            disabled={busy}
+            title="Beispielprojekt erzeugen"
+            aria-label="Beispielprojekt erzeugen"
+          >
+            <FolderPlus size={18} />
+          </button>
+          <button
+            className="icon-btn"
+            onClick={pickProjectFolder}
+            disabled={busy}
+            title="Projekt öffnen…"
+            aria-label="Projekt öffnen"
+          >
+            <FolderOpen size={18} />
+          </button>
+          <span className="toolbar-sep" />
+          <button
+            className="icon-btn save-btn"
             onClick={handleSave}
             disabled={!dirty || busy}
-            title={dirty ? "Ungespeicherte Änderungen speichern" : "Nichts zu speichern"}
+            title={dirty ? "Speichern (ungespeicherte Änderungen)" : "Speichern (nichts zu tun)"}
+            aria-label="Speichern"
           >
+            <Save size={18} />
             {dirty && <span className="dirty-dot" aria-hidden>●</span>}
-            Speichern
           </button>
-          <button onClick={buildAndOpen} disabled={busy || !project}>Build &amp; Preview</button>
+          <button
+            className="icon-btn"
+            onClick={buildAndOpen}
+            disabled={busy || !project}
+            title="Build & Preview"
+            aria-label="Build und Preview"
+          >
+            <Hammer size={18} />
+          </button>
+          <span className="toolbar-sep" />
+          <button
+            className="icon-btn"
+            onClick={() => setDeployOpen(true)}
+            disabled={busy || !project}
+            title="Deploy (Site veröffentlichen)"
+            aria-label="Deploy"
+          >
+            <UploadCloud size={18} />
+          </button>
+          <button
+            className="icon-btn"
+            onClick={() => setSettingsOpen(true)}
+            disabled={busy || !project}
+            title="Einstellungen (Deploy-Profile…)"
+            aria-label="Einstellungen"
+          >
+            <Settings size={18} />
+          </button>
         </div>
       </header>
 
@@ -313,6 +362,14 @@ function App() {
           slug={project.active_theme}
           onClose={() => setCssEditorOpen(false)}
         />
+      )}
+
+      {settingsOpen && project && (
+        <SettingsModal onClose={() => setSettingsOpen(false)} />
+      )}
+
+      {deployOpen && project && (
+        <DeployModal onClose={() => setDeployOpen(false)} />
       )}
 
       {showNewPage && project && (
