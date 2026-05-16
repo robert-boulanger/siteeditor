@@ -96,6 +96,40 @@ body {
 }
 .main-pane article h2 { margin-top: 0; }
 .main-pane h4 { margin-top: 1.5rem; }
+.body-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 1.5rem;
+}
+.body-header h4 { margin: 0; }
+.body-actions { display: flex; align-items: center; gap: 0.5rem; }
+.body-actions button {
+  padding: 0.35rem 0.8rem;
+  border: 1px solid var(--border);
+  background: white;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+.body-actions button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+.body-actions button:disabled { opacity: 0.5; cursor: not-allowed; }
+.dirty-dot { color: var(--accent); font-size: 1.2rem; }
+
+.body-editor {
+  width: 100%;
+  min-height: 22rem;
+  margin-top: 0.5rem;
+  padding: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-family: ui-monospace, "SF Mono", monospace;
+  font-size: 0.9rem;
+  line-height: 1.5;
+  resize: vertical;
+}
+.body-editor:focus { outline: none; border-color: var(--accent); }
+
 .main-pane pre {
   background: #fafafa;
   border: 1px solid var(--border);

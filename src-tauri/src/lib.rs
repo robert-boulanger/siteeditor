@@ -1,13 +1,17 @@
 mod bootstrap;
+mod preview;
 
 use camino::Utf8PathBuf;
 use projectfs::Project;
 use serde::Serialize;
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
+use tauri::Manager;
 
 #[derive(Default)]
 struct AppState {
     project: Mutex<Option<Project>>,
+    preview: preview::PreviewState,
+    preview_port: OnceLock<u16>,
 }
 
 #[derive(Serialize)]
@@ -43,17 +47,21 @@ fn app_version() -> String {
 }
 
 #[tauri::command]
-fn bootstrap_example(path: String) -> Result<OpenResult, String> {
+fn bootstrap_example(state: tauri::State<'_, AppState>, path: String) -> Result<OpenResult, String> {
     let p = Utf8PathBuf::from(path);
     bootstrap::bootstrap_example_project(&p).map_err(to_str_err)?;
-    open_project_inner(p)
+    let res = open_project_inner(p.clone())?;
+    let project = Project::open(&p).map_err(to_str_err)?;
+    state.preview.set_root(project.build_dir());
+    *state.project.lock().unwrap() = Some(project);
+    Ok(res)
 }
 
 #[tauri::command]
 fn open_project(state: tauri::State<'_, AppState>, path: String) -> Result<OpenResult, String> {
     let res = open_project_inner(Utf8PathBuf::from(path))?;
-    // Cache the project for later commands.
     let p = Project::open(Utf8PathBuf::from(&res.root)).map_err(to_str_err)?;
+    state.preview.set_root(p.build_dir());
     *state.project.lock().unwrap() = Some(p);
     Ok(res)
 }
@@ -88,16 +96,39 @@ fn load_page(state: tauri::State<'_, AppState>, slug: String) -> Result<serde_js
 }
 
 #[tauri::command]
+fn save_page_body(
+    state: tauri::State<'_, AppState>,
+    slug: String,
+    body: String,
+) -> Result<serde_json::Value, String> {
+    let guard = state.project.lock().unwrap();
+    let project = guard.as_ref().ok_or_else(|| "no project open".to_string())?;
+    project.save_page_body(&slug, &body).map_err(to_str_err)?;
+    let page = project.load_page(&slug).map_err(to_str_err)?;
+    serde_json::to_value(&page).map_err(to_str_err)
+}
+
+#[tauri::command]
 fn build_site(state: tauri::State<'_, AppState>) -> Result<BuildResult, String> {
     let guard = state.project.lock().unwrap();
     let project = guard.as_ref().ok_or_else(|| "no project open".to_string())?;
     let report = sitebuilder::build_site(project).map_err(to_str_err)?;
+    state.preview.set_root(project.build_dir());
     let index_file = format!("{}/index.html", report.output_dir);
     Ok(BuildResult {
         pages_rendered: report.pages_rendered,
         output_dir: report.output_dir,
         index_file,
     })
+}
+
+#[tauri::command]
+fn preview_url(state: tauri::State<'_, AppState>) -> Result<String, String> {
+    let port = state
+        .preview_port
+        .get()
+        .ok_or_else(|| "preview server nicht initialisiert".to_string())?;
+    Ok(format!("http://127.0.0.1:{port}/"))
 }
 
 #[tauri::command]
@@ -123,12 +154,25 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
+        .setup(|app| {
+            let state = app.state::<AppState>();
+            let preview = state.preview.clone();
+            let port_slot = &state.preview_port;
+            // axum on the tauri async runtime
+            let port = tauri::async_runtime::block_on(preview::start(preview))
+                .map_err(|e| format!("preview server: {e}"))?;
+            let _ = port_slot.set(port);
+            eprintln!("preview server: http://127.0.0.1:{port}");
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             app_version,
             bootstrap_example,
             open_project,
             load_page,
+            save_page_body,
             build_site,
+            preview_url,
             open_in_browser,
         ])
         .run(tauri::generate_context!())

@@ -28,3 +28,7 @@ camino.workspace = true
 projectfs.workspace = true
 theme-contract.workspace = true
 sitebuilder.workspace = true
+
+axum = "0.7"
+tokio = { version = "1", features = ["full"] }
+mime_guess = "2"

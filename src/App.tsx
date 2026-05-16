@@ -1,10 +1,37 @@
+import { useEffect, useState } from "react";
 import { useStore } from "./store";
-import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
+import { open as openDialog, save as saveDialog, ask } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
 import "./App.css";
 
 function App() {
-  const { project, currentPage, status, busy, bootstrap, open, loadPage, build } = useStore();
+  const { project, currentPage, status, busy, bootstrap, open, loadPage, savePageBody, build } = useStore();
+  const [draft, setDraft] = useState<string>("");
+  const dirty = currentPage ? draft !== currentPage.body_markdown : false;
+
+  useEffect(() => {
+    setDraft(currentPage?.body_markdown ?? "");
+  }, [currentPage?.slug, currentPage?.body_markdown]);
+
+  async function handleSave() {
+    if (!currentPage) return;
+    try {
+      await savePageBody(currentPage.slug, draft);
+    } catch {
+      /* status zeigt Fehler */
+    }
+  }
+
+  async function handleLoadPage(slug: string) {
+    if (dirty) {
+      const ok = await ask("Ungespeicherte Änderungen verwerfen?", {
+        title: "Seitenwechsel",
+        kind: "warning",
+      });
+      if (!ok) return;
+    }
+    loadPage(slug);
+  }
 
   async function pickProjectFolder() {
     const path = await openDialog({ directory: true, multiple: false, title: "Projekt-Ordner wählen" });
@@ -21,9 +48,10 @@ function App() {
 
   async function buildAndOpen() {
     try {
-      const r = await build();
+      await build();
       try {
-        await invoke("open_in_browser", { path: r.index_file });
+        const url = await invoke<string>("preview_url");
+        await invoke("open_in_browser", { path: url });
       } catch (e) {
         useStore.getState().setStatus(`Build OK, aber Browser-Öffnen fehlgeschlagen: ${e}`);
       }
@@ -58,7 +86,7 @@ function App() {
                   <li key={p.slug}>
                     <button
                       className={currentPage?.slug === p.slug ? "is-active" : ""}
-                      onClick={() => loadPage(p.slug)}
+                      onClick={() => handleLoadPage(p.slug)}
                     >
                       <span className="slug">{p.slug}</span>
                       <span className="title">{p.title}</span>
@@ -86,8 +114,19 @@ function App() {
               <h4>Blocks (Frontmatter)</h4>
               <pre className="json">{JSON.stringify(currentPage.frontmatter.blocks, null, 2)}</pre>
 
-              <h4>Body (Markdown)</h4>
-              <pre className="markdown">{currentPage.body_markdown}</pre>
+              <div className="body-header">
+                <h4>Body (Markdown)</h4>
+                <div className="body-actions">
+                  {dirty && <span className="dirty-dot" title="Ungespeicherte Änderungen">●</span>}
+                  <button onClick={handleSave} disabled={!dirty || busy}>Speichern</button>
+                </div>
+              </div>
+              <textarea
+                className="body-editor"
+                value={draft}
+                onChange={(e) => setDraft(e.currentTarget.value)}
+                spellCheck={false}
+              />
             </article>
           ) : (
             <p className="muted">Keine Page ausgewählt.</p>

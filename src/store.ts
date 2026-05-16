@@ -42,6 +42,7 @@ type Store = {
   bootstrap: (path: string) => Promise<void>;
   open: (path: string) => Promise<void>;
   loadPage: (slug: string) => Promise<void>;
+  savePageBody: (slug: string, body: string) => Promise<void>;
   build: () => Promise<BuildResult>;
   setStatus: (s: string) => void;
 };
@@ -86,6 +87,19 @@ export const useStore = create<Store>((set, get) => ({
       set({ currentPage: page });
     } catch (e) {
       set({ status: `Page-Load-Fehler: ${e}` });
+    }
+  },
+
+  savePageBody: async (slug: string, body: string) => {
+    set({ busy: true, status: `Speichere ${slug} …` });
+    try {
+      const page = await invoke<PageDoc>("save_page_body", { slug, body });
+      set({ currentPage: page, status: `Gespeichert: ${slug}` });
+    } catch (e) {
+      set({ status: `Save-Fehler: ${e}` });
+      throw e;
+    } finally {
+      set({ busy: false });
     }
   },
 

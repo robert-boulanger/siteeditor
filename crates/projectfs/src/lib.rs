@@ -150,6 +150,74 @@ impl Project {
         let path = self.pages_dir().join(format!("{slug}.md"));
         load_page_file(&path, slug.to_string())
     }
+
+    /// Tauscht den Body einer existierenden Page aus, ohne Frontmatter zu
+    /// verändern. Schreibt atomar (tmp + rename) und legt die Vorgängerversion
+    /// als Backup ab.
+    pub fn save_page_body(&self, slug: &str, new_body: &str) -> Result<(), ProjectError> {
+        let path = self.pages_dir().join(format!("{slug}.md"));
+        let raw = std::fs::read_to_string(&path)?;
+        let (frontmatter, _old_body) = split_frontmatter(&raw).map_err(|e| {
+            ProjectError::InvalidPage {
+                path: path.to_string(),
+                reason: e,
+            }
+        })?;
+        let assembled = assemble_page(&frontmatter, new_body);
+
+        backup_file(&self.root, slug, &raw)?;
+        atomic_write(&path, &assembled)?;
+        Ok(())
+    }
+}
+
+fn assemble_page(frontmatter: &str, body: &str) -> String {
+    let mut s = String::with_capacity(frontmatter.len() + body.len() + 16);
+    s.push_str("---\n");
+    s.push_str(frontmatter);
+    if !frontmatter.ends_with('\n') {
+        s.push('\n');
+    }
+    s.push_str("---\n");
+    s.push_str(body);
+    s
+}
+
+fn atomic_write(target: &Utf8Path, content: &str) -> Result<(), ProjectError> {
+    let parent = target.parent().ok_or_else(|| ProjectError::InvalidPage {
+        path: target.to_string(),
+        reason: "no parent dir".into(),
+    })?;
+    std::fs::create_dir_all(parent)?;
+    let tmp = parent.join(format!(
+        ".{}.tmp",
+        target.file_name().unwrap_or("page")
+    ));
+    std::fs::write(&tmp, content)?;
+    std::fs::rename(&tmp, target)?;
+    Ok(())
+}
+
+fn backup_file(root: &Utf8Path, slug: &str, content: &str) -> Result<(), ProjectError> {
+    let dir = root.join(".siteeditor").join("backups").join(slug);
+    std::fs::create_dir_all(&dir)?;
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let file = dir.join(format!("{ts}.md"));
+    std::fs::write(&file, content)?;
+    // keep last 10
+    let mut entries: Vec<_> = std::fs::read_dir(&dir)?
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().and_then(|s| s.to_str()) == Some("md"))
+        .collect();
+    entries.sort_by_key(|e| e.file_name());
+    while entries.len() > 10 {
+        let drop = entries.remove(0);
+        let _ = std::fs::remove_file(drop.path());
+    }
+    Ok(())
 }
 
 fn load_page_file(path: &Utf8Path, slug: String) -> Result<PageDoc, ProjectError> {
