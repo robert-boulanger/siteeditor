@@ -283,6 +283,84 @@ fn copy_dir(src: &Utf8PathBuf, dst: &Utf8PathBuf) -> Result<()> {
     Ok(())
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use projectfs::{MenuConfig, PageDoc, PageFrontmatter};
+
+    fn page(slug: &str, title: &str, menu_show: bool, menu_order: Option<i32>, visible: bool) -> PageDoc {
+        PageDoc {
+            slug: slug.into(),
+            frontmatter: PageFrontmatter {
+                title: title.into(),
+                template: None,
+                visible,
+                menu: MenuConfig { show: menu_show, order: menu_order },
+                blocks: vec![],
+                meta: Default::default(),
+            },
+            body_markdown: String::new(),
+        }
+    }
+
+    #[test]
+    fn page_url_index_is_root() {
+        assert_eq!(page_url("index"), "/");
+        assert_eq!(page_url("about"), "/about/");
+        assert_eq!(page_url("blog-1"), "/blog-1/");
+    }
+
+    #[test]
+    fn build_menu_filters_hidden_and_invisible() {
+        let pages = vec![
+            page("a", "A", true, Some(1), true),
+            page("b", "B", false, None, true),     // menu.show=false → raus
+            page("c", "C", true, Some(2), false),  // visible=false → raus
+        ];
+        let items = build_menu(&pages, &[]);
+        let slugs: Vec<_> = items.iter().map(|i| i.slug.as_str()).collect();
+        assert_eq!(slugs, vec!["a"]);
+    }
+
+    #[test]
+    fn build_menu_honours_menu_order() {
+        let pages = vec![
+            page("about", "About", true, Some(10), true),
+            page("index", "Home", true, Some(20), true),
+            page("contact", "Contact", true, Some(5), true),
+        ];
+        let order = vec!["index".to_string(), "about".to_string()];
+        let items = build_menu(&pages, &order);
+        let slugs: Vec<_> = items.iter().map(|i| i.slug.as_str()).collect();
+        // index + about kommen wie in menu_order zuerst, contact fällt hinten an
+        assert_eq!(slugs, vec!["index", "about", "contact"]);
+    }
+
+    #[test]
+    fn build_menu_fallback_sorts_by_order_then_title() {
+        let pages = vec![
+            page("zeta", "Zeta", true, Some(5), true),
+            page("alpha", "Alpha", true, Some(5), true),
+            page("beta", "Beta", true, Some(1), true),
+        ];
+        let items = build_menu(&pages, &[]);
+        let slugs: Vec<_> = items.iter().map(|i| i.slug.as_str()).collect();
+        // beta(order=1) zuerst, dann alpha(order=5) vor zeta(order=5) alphabetisch
+        assert_eq!(slugs, vec!["beta", "alpha", "zeta"]);
+    }
+
+    #[test]
+    fn build_menu_missing_order_defaults_to_1000() {
+        let pages = vec![
+            page("a", "A", true, None, true),
+            page("b", "B", true, Some(1), true),
+        ];
+        let items = build_menu(&pages, &[]);
+        let slugs: Vec<_> = items.iter().map(|i| i.slug.as_str()).collect();
+        assert_eq!(slugs, vec!["b", "a"]);
+    }
+}
+
 fn write_css_vars(out_dir: &Utf8PathBuf, vars: &BTreeMap<String, String>) -> Result<()> {
     let mut s = String::from(":root {\n");
     for (k, v) in vars {

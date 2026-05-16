@@ -2925,6 +2925,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml",
+ "tempfile",
  "thiserror 2.0.18",
  "tracing",
  "walkdir",
@@ -3545,6 +3546,7 @@ dependencies = [
  "tauri-plugin-dialog",
  "tauri-plugin-fs",
  "tauri-plugin-opener",
+ "tempfile",
  "theme-contract",
  "tokio",
  "tracing",
@@ -4133,6 +4135,7 @@ dependencies = [
  "camino",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror 2.0.18",
  "tracing",
 ]

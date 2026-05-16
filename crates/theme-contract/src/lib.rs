@@ -187,4 +187,131 @@ mod tests {
         assert!(!is_valid_theme_name("MyTheme"));
         assert!(!is_valid_theme_name(""));
     }
+
+    // --- validate_theme: Fixture-Helpers ------------------------------------
+
+    fn full_css_vars() -> String {
+        let mut s = String::from("{");
+        for (i, v) in REQUIRED_CSS_VARS.iter().enumerate() {
+            if i > 0 {
+                s.push(',');
+            }
+            s.push_str(&format!("\"{v}\":\"#000\""));
+        }
+        s.push('}');
+        s
+    }
+
+    fn write_manifest(dir: &Utf8Path, spec_version: &str, name: &str, css_vars_json: &str) {
+        let json = format!(
+            r#"{{"spec_version":"{spec_version}","name":"{name}","version":"1.0.0",
+                "supported_blocks":["text"],"css_variables":{css_vars_json}}}"#
+        );
+        std::fs::write(dir.join("theme.json"), json).unwrap();
+    }
+
+    fn write_all_templates(dir: &Utf8Path) {
+        for t in REQUIRED_TEMPLATES {
+            let p = dir.join(t);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, "<html></html>").unwrap();
+        }
+    }
+
+    fn theme_dir(tmp: &tempfile::TempDir) -> camino::Utf8PathBuf {
+        Utf8Path::from_path(tmp.path()).unwrap().to_path_buf()
+    }
+
+    #[test]
+    fn validate_theme_ok_for_minimal_correct_theme() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = theme_dir(&tmp);
+        write_manifest(&dir, "0.2", "ok-theme", &full_css_vars());
+        write_all_templates(&dir);
+        std::fs::create_dir_all(dir.join("styles")).unwrap();
+        std::fs::write(dir.join("styles/main.css"), "/* ok */").unwrap();
+
+        let r = validate_theme(&dir);
+        assert!(r.ok, "errors: {:?}", r.errors);
+        assert!(r.warnings.is_empty());
+    }
+
+    #[test]
+    fn validate_theme_flags_missing_template() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = theme_dir(&tmp);
+        write_manifest(&dir, "0.2", "ok-theme", &full_css_vars());
+        write_all_templates(&dir);
+        // ein Pflicht-Template wieder entfernen
+        std::fs::remove_file(dir.join("templates/404.html")).unwrap();
+
+        let r = validate_theme(&dir);
+        assert!(!r.ok);
+        assert!(r.errors.iter().any(|e| e.code == "MISSING_TEMPLATE"
+            && e.path.as_deref() == Some("templates/404.html")));
+    }
+
+    #[test]
+    fn validate_theme_flags_bad_spec_version() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = theme_dir(&tmp);
+        write_manifest(&dir, "1.0", "ok-theme", &full_css_vars());
+        write_all_templates(&dir);
+
+        let r = validate_theme(&dir);
+        assert!(!r.ok);
+        assert!(r.errors.iter().any(|e| e.code == "BAD_SPEC_VERSION"));
+    }
+
+    #[test]
+    fn validate_theme_flags_bad_name() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = theme_dir(&tmp);
+        write_manifest(&dir, "0.2", "Bad_Name", &full_css_vars());
+        write_all_templates(&dir);
+
+        let r = validate_theme(&dir);
+        assert!(!r.ok);
+        assert!(r.errors.iter().any(|e| e.code == "BAD_THEME_NAME"));
+    }
+
+    #[test]
+    fn validate_theme_flags_missing_css_vars() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = theme_dir(&tmp);
+        // nur die ersten zwei Pflicht-Vars setzen
+        let partial = format!(
+            "{{\"{}\":\"#000\",\"{}\":\"#fff\"}}",
+            REQUIRED_CSS_VARS[0], REQUIRED_CSS_VARS[1]
+        );
+        write_manifest(&dir, "0.2", "ok-theme", &partial);
+        write_all_templates(&dir);
+
+        let r = validate_theme(&dir);
+        assert!(!r.ok);
+        let missing = r.errors.iter().filter(|e| e.code == "MISSING_CSS_VAR").count();
+        assert_eq!(missing, REQUIRED_CSS_VARS.len() - 2);
+    }
+
+    #[test]
+    fn validate_theme_warns_when_main_css_missing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = theme_dir(&tmp);
+        write_manifest(&dir, "0.2", "ok-theme", &full_css_vars());
+        write_all_templates(&dir);
+        // kein styles/main.css
+
+        let r = validate_theme(&dir);
+        assert!(r.ok, "errors: {:?}", r.errors);
+        assert!(r.warnings.iter().any(|w| w.code == "MISSING_CSS"));
+    }
+
+    #[test]
+    fn validate_theme_missing_manifest() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = theme_dir(&tmp);
+        let r = validate_theme(&dir);
+        assert!(!r.ok);
+        assert!(r.errors.iter().any(|e| e.code == "MISSING_MANIFEST"));
+    }
 }

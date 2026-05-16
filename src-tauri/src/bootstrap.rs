@@ -98,6 +98,50 @@ fn write(path: Utf8PathBuf, content: &str) -> Result<()> {
     Ok(())
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use camino::Utf8Path;
+
+    fn utf8(tmp: &tempfile::TempDir) -> Utf8PathBuf {
+        Utf8Path::from_path(tmp.path()).unwrap().to_path_buf()
+    }
+
+    #[test]
+    fn bootstraps_into_empty_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let target = utf8(&tmp);
+        bootstrap_example_project(&target).expect("bootstrap empty dir");
+
+        assert!(target.join("site.json").exists());
+        assert!(target.join("pages/index.md").exists());
+        assert!(target.join("pages/about.md").exists());
+        assert!(target.join("themes/default/theme.json").exists());
+        assert!(target.join("themes/default/templates/index.html").exists());
+        assert!(target.join("assets").is_dir());
+    }
+
+    #[test]
+    fn rejects_non_empty_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let target = utf8(&tmp);
+        std::fs::write(target.join("preexisting.txt"), "hi").unwrap();
+
+        let err = bootstrap_example_project(&target).expect_err("nicht-leeres Verzeichnis ablehnen");
+        let msg = format!("{err:#}");
+        assert!(msg.contains("nicht leer"), "Fehlertext: {msg}");
+    }
+
+    #[test]
+    fn creates_target_dir_if_missing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let target = utf8(&tmp).join("new-project");
+        assert!(!target.exists());
+        bootstrap_example_project(&target).expect("create + bootstrap");
+        assert!(target.join("site.json").exists());
+    }
+}
+
 fn write_default_theme(dir: &Utf8Path) -> Result<()> {
     write(dir.join("theme.json"), include_str!("../../themes/default/theme.json"))?;
     write(dir.join("styles/main.css"), include_str!("../../themes/default/styles/main.css"))?;

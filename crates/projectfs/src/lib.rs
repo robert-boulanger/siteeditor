@@ -275,4 +275,74 @@ mod tests {
         assert!(fm.contains("title: Hello"));
         assert_eq!(body, "# Body\n");
     }
+
+    fn make_project_with_page(page_md: &str) -> (tempfile::TempDir, Project) {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = Utf8Path::from_path(tmp.path()).unwrap().to_path_buf();
+        std::fs::write(
+            root.join("site.json"),
+            r#"{"schema_version":"0.2","title":"T","base_url":"https://x","active_theme":"default"}"#,
+        )
+        .unwrap();
+        std::fs::create_dir_all(root.join("pages")).unwrap();
+        std::fs::write(root.join("pages/index.md"), page_md).unwrap();
+        let project = Project::open(&root).unwrap();
+        (tmp, project)
+    }
+
+    #[test]
+    fn save_page_body_preserves_frontmatter_bytewise() {
+        // Frontmatter mit ungewöhnlicher (aber gültiger) Quoting/Reihenfolge,
+        // die ein Roundtrip durch serde_yaml zerschießen würde.
+        let original = "---\ntitle: \"Hi\"\nvisible: true\nmenu:\n  show: true\n  order:  7\n---\nold body\n";
+        let (_tmp, project) = make_project_with_page(original);
+
+        project.save_page_body("index", "new body\n").unwrap();
+
+        let written = std::fs::read_to_string(project.pages_dir().join("index.md")).unwrap();
+        let (fm, body) = split_frontmatter(&written).unwrap();
+        // Frontmatter byte-genau identisch zum Original
+        let (orig_fm, _) = split_frontmatter(original).unwrap();
+        assert_eq!(fm, orig_fm, "frontmatter changed byte-wise");
+        assert_eq!(body, "new body\n");
+    }
+
+    #[test]
+    fn save_page_body_is_atomic_no_tmp_left() {
+        let (_tmp, project) = make_project_with_page("---\ntitle: T\n---\nbody\n");
+        project.save_page_body("index", "x").unwrap();
+        // kein verwaister .tmp-File
+        let leftovers: Vec<_> = std::fs::read_dir(project.pages_dir())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_string_lossy().ends_with(".tmp"))
+            .collect();
+        assert!(leftovers.is_empty(), "tmp file leaked: {leftovers:?}");
+    }
+
+    #[test]
+    fn save_page_body_rotates_backups_keeping_last_10() {
+        let (_tmp, project) = make_project_with_page("---\ntitle: T\n---\nv0\n");
+        // Backup-Verzeichnis mit 15 alten Einträgen vorbefüllen.
+        let backup_dir = project.root.join(".siteeditor/backups/index");
+        std::fs::create_dir_all(&backup_dir).unwrap();
+        for i in 0..15u32 {
+            std::fs::write(backup_dir.join(format!("{i:010}.md")), format!("old-{i}")).unwrap();
+        }
+        // Ein save_page_body löst die Rotation aus.
+        project.save_page_body("index", "neu\n").unwrap();
+
+        let count = std::fs::read_dir(&backup_dir).unwrap().count();
+        assert!(count <= 10, "backup rotation kept {count} files (>10)");
+        // Die ältesten Einträge müssen entfernt sein, der jüngste alte Eintrag bleibt.
+        assert!(!backup_dir.join("0000000000.md").exists(), "ältester Backup nicht rotiert");
+        assert!(backup_dir.join("0000000014.md").exists(), "jüngster vorbefüllter Backup wurde verworfen");
+    }
+
+    #[test]
+    fn save_page_body_rejects_missing_page() {
+        let (_tmp, project) = make_project_with_page("---\ntitle: T\n---\nbody\n");
+        let err = project.save_page_body("does-not-exist", "x").unwrap_err();
+        matches!(err, ProjectError::Io(_));
+    }
 }

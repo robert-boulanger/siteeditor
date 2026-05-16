@@ -110,3 +110,35 @@ fn text(status: StatusCode, msg: &str) -> Response {
         .body(Body::from(msg.to_string()))
         .unwrap()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::sanitize_path;
+
+    #[test]
+    fn strips_leading_slash() {
+        assert_eq!(sanitize_path("/about/"), "about");
+        assert_eq!(sanitize_path("/index.html"), "index.html");
+    }
+
+    #[test]
+    fn collapses_redundant_segments() {
+        assert_eq!(sanitize_path("/a//b/./c/"), "a/b/c");
+        assert_eq!(sanitize_path("///"), "");
+        assert_eq!(sanitize_path("/"), "");
+    }
+
+    #[test]
+    fn blocks_path_traversal() {
+        // Klassisches `..` darf nicht über die Root hinausführen.
+        assert_eq!(sanitize_path("/../etc/passwd"), "etc/passwd");
+        assert_eq!(sanitize_path("/a/../../etc/passwd"), "etc/passwd");
+        assert_eq!(sanitize_path("/a/b/../../.."), "");
+    }
+
+    #[test]
+    fn keeps_dotfiles_intact() {
+        // Eine einzelne führende Punkt-Komponente (z.B. `.well-known`) ist legitim.
+        assert_eq!(sanitize_path("/.well-known/foo"), ".well-known/foo");
+    }
+}
