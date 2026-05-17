@@ -453,9 +453,24 @@ fn install_menu(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>
         .item(&preview_item)
         .build()?;
 
+    // macOS: ohne ein „Bearbeiten"-Submenü mit den Predefined-Items
+    // routet die WebView CMD-X/C/V/A nicht an die Textfelder — das
+    // Kontextmenü funktioniert, die Shortcuts nicht. Reihenfolge wie
+    // im Apple-HIG.
+    let edit_submenu = SubmenuBuilder::new(app, "Bearbeiten")
+        .item(&PredefinedMenuItem::undo(app, None)?)
+        .item(&PredefinedMenuItem::redo(app, None)?)
+        .separator()
+        .item(&PredefinedMenuItem::cut(app, None)?)
+        .item(&PredefinedMenuItem::copy(app, None)?)
+        .item(&PredefinedMenuItem::paste(app, None)?)
+        .item(&PredefinedMenuItem::select_all(app, None)?)
+        .build()?;
+
     let menu = MenuBuilder::new(app)
         .item(&app_submenu)
         .item(&file_submenu)
+        .item(&edit_submenu)
         .item(&view_submenu)
         .build()?;
     app.set_menu(menu)?;

@@ -19,6 +19,7 @@ export function AssetPicker({ mode = "single", accept = "any", onCancel, onPick 
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [filter, setFilter] = useState("");
   const { listAssets, importAsset, deleteAsset, readAssetDataUrl } = useStore();
 
   async function refresh() {
@@ -94,6 +95,11 @@ export function AssetPicker({ mode = "single", accept = "any", onCancel, onPick 
     onPick(paths);
   }
 
+  const needle = filter.trim().toLowerCase();
+  const visible = needle
+    ? assets.filter((a) => a.name.toLowerCase().includes(needle) || a.path.toLowerCase().includes(needle))
+    : assets;
+
   return (
     <div className="modal-backdrop" onMouseDown={onCancel}>
       <div className="modal asset-picker" onMouseDown={(e) => e.stopPropagation()}>
@@ -102,11 +108,23 @@ export function AssetPicker({ mode = "single", accept = "any", onCancel, onPick 
           <button type="button" onClick={handleImport} disabled={busy}>+ Datei hinzufügen</button>
         </div>
         {error && <p className="error">{error}</p>}
+        {assets.length > 0 && (
+          <input
+            type="search"
+            className="asset-filter"
+            placeholder="Filter nach Dateiname…"
+            value={filter}
+            onChange={(e) => setFilter(e.currentTarget.value)}
+            autoFocus
+          />
+        )}
         {assets.length === 0 ? (
           <p style={{ opacity: 0.6 }}>Keine Assets vorhanden. Lade welche per „+ Datei hinzufügen" hoch.</p>
+        ) : visible.length === 0 ? (
+          <p style={{ opacity: 0.6 }}>Keine Treffer für „{filter}".</p>
         ) : (
           <div className="asset-grid">
-            {assets.map((a) => {
+            {visible.map((a) => {
               const isImg = IMAGE_MIMES.includes(a.mime);
               const sel = selected.has(a.path);
               return (

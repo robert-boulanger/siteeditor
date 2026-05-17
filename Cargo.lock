@@ -1214,6 +1214,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "deploy-ftp"
+version = "0.1.0"
+dependencies = [
+ "camino",
+ "deploy-contract",
+ "serde",
+ "suppaftp",
+ "thiserror 2.0.18",
+ "tracing",
+]
+
+[[package]]
 name = "deploy-sftp"
 version = "0.1.0"
 dependencies = [
@@ -2820,6 +2832,29 @@ dependencies = [
  "security-framework 3.7.0",
  "windows-sys 0.60.2",
  "zeroize",
+]
+
+[[package]]
+name = "lazy-regex"
+version = "3.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6bae91019476d3ec7147de9aa291cadb6d870abf2f3015d2da73a90325ac1496"
+dependencies = [
+ "lazy-regex-proc_macros",
+ "once_cell",
+ "regex",
+]
+
+[[package]]
+name = "lazy-regex-proc_macros"
+version = "3.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4de9c1e1439d8b7b3061b2d209809f447ca33241733d9a3c01eabf2dc8d94358"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "regex",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -4960,6 +4995,7 @@ dependencies = [
  "base64 0.22.1",
  "camino",
  "deploy-contract",
+ "deploy-ftp",
  "deploy-sftp",
  "futures-util",
  "keyring",
@@ -5147,6 +5183,19 @@ name = "subtle"
 version = "2.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
+
+[[package]]
+name = "suppaftp"
+version = "8.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4275c142b5be3af2eeadd70dd368caf3b65546c8af1035839372dd7a1436127d"
+dependencies = [
+ "chrono",
+ "futures-lite",
+ "lazy-regex",
+ "log",
+ "thiserror 2.0.18",
+]
 
 [[package]]
 name = "swift-rs"

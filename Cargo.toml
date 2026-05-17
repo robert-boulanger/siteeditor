@@ -7,6 +7,7 @@ members = [
     "crates/sitebuilder",
     "crates/deploy-contract",
     "crates/deploy-sftp",
+    "crates/deploy-ftp",
 ]
 
 [workspace.package]
@@ -31,6 +32,7 @@ theme-contract = { path = "crates/theme-contract" }
 sitebuilder = { path = "crates/sitebuilder" }
 deploy-contract = { path = "crates/deploy-contract" }
 deploy-sftp = { path = "crates/deploy-sftp" }
+deploy-ftp = { path = "crates/deploy-ftp" }
 
 # Phase 10 — Deployment
 sha2 = "0.10"

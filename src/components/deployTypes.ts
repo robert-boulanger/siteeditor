@@ -3,7 +3,7 @@
  *  Tauri-Command-DTOs in `src-tauri/src/deploy_commands.rs`.
  */
 
-export type Protocol = "sftp" | "github_pages";
+export type Protocol = "sftp" | "ftp" | "github_pages";
 
 export type AuthMethod =
   | { kind: "password"; user: string }

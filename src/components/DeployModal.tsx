@@ -112,7 +112,7 @@ export function DeployModal({ onClose }: Props) {
               <select value={selected ?? ""} onChange={(e) => setSelected(e.currentTarget.value)} disabled={busy}>
                 {profiles.map((p) => (
                   <option key={p.name} value={p.name}>
-                    {p.name} ({p.protocol === "sftp" ? "SFTP" : "GitHub Pages"})
+                    {p.name} ({p.protocol === "sftp" ? "SFTP" : p.protocol === "ftp" ? "FTP" : "GitHub Pages"})
                   </option>
                 ))}
               </select>

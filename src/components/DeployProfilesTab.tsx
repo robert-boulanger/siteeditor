@@ -28,8 +28,19 @@ function applyProtocolDefaults(p: DeployProfile, protocol: Protocol): DeployProf
     return {
       ...p,
       protocol,
-      port: p.port === 443 ? 22 : p.port,
+      port: p.port === 443 || p.port === 21 ? 22 : p.port,
       auth: p.auth.kind === "github_token" ? { kind: "password", user: "" } : p.auth,
+      branch: null,
+    };
+  }
+  if (protocol === "ftp") {
+    const user =
+      p.auth.kind === "password" || p.auth.kind === "ssh_key" ? p.auth.user : "";
+    return {
+      ...p,
+      protocol,
+      port: p.port === 22 || p.port === 443 ? 21 : p.port,
+      auth: { kind: "password", user },
       branch: null,
     };
   }
@@ -41,6 +52,14 @@ function applyProtocolDefaults(p: DeployProfile, protocol: Protocol): DeployProf
     host: p.host || "github.com",
     branch: p.branch ?? "gh-pages",
   };
+}
+
+function protocolLabel(p: Protocol): string {
+  switch (p) {
+    case "sftp": return "SFTP";
+    case "ftp": return "FTP";
+    case "github_pages": return "GitHub Pages";
+  }
 }
 
 export function DeployProfilesTab({ busy, setBusy, onDirtyChange }: Props) {
@@ -174,7 +193,7 @@ export function DeployProfilesTab({ busy, setBusy, onDirtyChange }: Props) {
                   }}
                 >
                   <strong>{p.name}</strong>
-                  <div className="muted small">{p.protocol === "sftp" ? "SFTP" : "GitHub Pages"}</div>
+                  <div className="muted small">{protocolLabel(p.protocol)}</div>
                 </button>
               </li>
             ))}
@@ -197,6 +216,7 @@ export function DeployProfilesTab({ busy, setBusy, onDirtyChange }: Props) {
                   onChange={(e) => { setDraft(applyProtocolDefaults(draft, e.currentTarget.value as Protocol)); markDirty(); }}
                 >
                   <option value="sftp">SFTP</option>
+                  <option value="ftp">FTP</option>
                   <option value="github_pages">GitHub Pages</option>
                 </select>
               </label>
@@ -251,6 +271,22 @@ export function DeployProfilesTab({ busy, setBusy, onDirtyChange }: Props) {
                   <label>
                     <span>Remote-Pfad (absolut)</span>
                     <input value={draft.remote_path} onChange={(e) => updateDraft("remote_path", e.currentTarget.value)} placeholder="/var/www/site" />
+                  </label>
+                </>
+              )}
+
+              {draft.protocol === "ftp" && (
+                <>
+                  <label>
+                    <span>FTP-User</span>
+                    <input
+                      value={draft.auth.kind === "password" ? draft.auth.user : ""}
+                      onChange={(e) => updateAuth({ kind: "password", user: e.currentTarget.value })}
+                    />
+                  </label>
+                  <label>
+                    <span>Remote-Pfad (absolut)</span>
+                    <input value={draft.remote_path} onChange={(e) => updateDraft("remote_path", e.currentTarget.value)} placeholder="/htdocs" />
                   </label>
                 </>
               )}

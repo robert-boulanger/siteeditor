@@ -13,6 +13,7 @@ use deploy_contract::{
     AuthMethod, DeployProfile, DiffReport, Manifest, ProgressEvent, ProgressSink, Protocol,
     UploadPlan, Uploader, diff,
 };
+use deploy_ftp::FtpAdapter;
 use deploy_sftp::SftpAdapter;
 use projectfs::Project;
 use serde::Serialize;
@@ -164,6 +165,10 @@ pub fn deploy_dry_run(
             let mut adapter = SftpAdapter::new(secret);
             adapter.fetch_remote_manifest(&profile).map_err(to_str_err)?
         }
+        Protocol::Ftp => {
+            let mut adapter = FtpAdapter::new(secret);
+            adapter.fetch_remote_manifest(&profile).map_err(to_str_err)?
+        }
         // GitHub-Pages-Adapter kommt in Schritt 8. Bis dahin: Full-Upload.
         Protocol::GithubPages => None,
     };
@@ -183,7 +188,11 @@ pub fn deploy_run(
     }
 
     let local = Manifest::from_directory(&build_dir).map_err(to_str_err)?;
-    let mut adapter = SftpAdapter::new(secret);
+    let mut adapter: Box<dyn Uploader> = match profile.protocol {
+        Protocol::Sftp => Box::new(SftpAdapter::new(secret)),
+        Protocol::Ftp => Box::new(FtpAdapter::new(secret)),
+        Protocol::GithubPages => unreachable!("oben mit Early-Return abgefangen"),
+    };
 
     // Connect + Manifest holen (UI sieht Connected danach).
     let emit_one = |ev: ProgressEvent| {

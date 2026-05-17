@@ -9,6 +9,7 @@ use thiserror::Error;
 #[serde(rename_all = "snake_case")]
 pub enum Protocol {
     Sftp,
+    Ftp,
     GithubPages,
 }
 
@@ -92,6 +93,8 @@ pub enum ProfileError {
     EmptyRemotePath,
     #[error("SFTP-Profile dürfen keine GithubToken-Auth verwenden")]
     AuthMismatchSftpExpectsSshOrPassword,
+    #[error("FTP-Profile dürfen ausschließlich Password-Auth verwenden")]
+    AuthMismatchFtpExpectsPassword,
     #[error("GitHub-Pages-Profile dürfen ausschließlich GithubToken-Auth verwenden")]
     AuthMismatchGithubExpectsToken,
     #[error("GitHub-Pages: `remote_path` muss `<owner>/<repo>` sein, war `{0}`")]
@@ -125,6 +128,10 @@ impl DeployProfile {
         match (self.protocol, &self.auth) {
             (Protocol::Sftp, AuthMethod::GithubToken { .. }) => {
                 return Err(ProfileError::AuthMismatchSftpExpectsSshOrPassword);
+            }
+            (Protocol::Ftp, AuthMethod::SshKey { .. })
+            | (Protocol::Ftp, AuthMethod::GithubToken { .. }) => {
+                return Err(ProfileError::AuthMismatchFtpExpectsPassword);
             }
             (Protocol::GithubPages, AuthMethod::Password { .. })
             | (Protocol::GithubPages, AuthMethod::SshKey { .. }) => {
@@ -232,6 +239,47 @@ mod tests {
         }"#;
         let p: DeployProfile = serde_json::from_str(minimal).unwrap();
         assert!(p.prefer_diff);
+    }
+
+    fn ftp_password() -> DeployProfile {
+        DeployProfile {
+            name: "prod-ftp".into(),
+            protocol: Protocol::Ftp,
+            host: "srv05.nanet.at".into(),
+            port: 21,
+            auth: AuthMethod::Password { user: "d001704elisabeth".into() },
+            remote_path: "/htdocs".into(),
+            branch: None,
+            prefer_diff: true,
+        }
+    }
+
+    #[test]
+    fn ftp_mit_password_valid() {
+        ftp_password().validate().unwrap();
+    }
+
+    #[test]
+    fn ftp_mit_sshkey_invalid() {
+        let mut p = ftp_password();
+        p.auth = AuthMethod::SshKey { user: "u".into(), private_key_path: "/k".into() };
+        assert!(matches!(p.validate(), Err(ProfileError::AuthMismatchFtpExpectsPassword)));
+    }
+
+    #[test]
+    fn ftp_mit_token_invalid() {
+        let mut p = ftp_password();
+        p.auth = AuthMethod::GithubToken { user: "x".into() };
+        assert!(matches!(p.validate(), Err(ProfileError::AuthMismatchFtpExpectsPassword)));
+    }
+
+    #[test]
+    fn ftp_serde_roundtrip() {
+        let p = ftp_password();
+        let json = serde_json::to_string(&p).unwrap();
+        assert!(json.contains("\"protocol\":\"ftp\""));
+        let back: DeployProfile = serde_json::from_str(&json).unwrap();
+        assert_eq!(p, back);
     }
 
     #[test]

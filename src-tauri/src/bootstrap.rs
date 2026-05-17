@@ -106,6 +106,14 @@ blocks:
     // themes/default -> copy from app bundle? Easier: write inline minimal default.
     write_default_theme(&target.join("themes").join("default"))?;
 
+    // LLM-Anleitung für Theme-Generierung/-Anpassung: liegt im
+    // themes/-Ordner jedes neuen Projekts, damit Assistenten sie
+    // vor jeder Theme-Arbeit lesen.
+    write(
+        target.join("themes").join("README.md"),
+        include_str!("../../themes/README.md"),
+    )?;
+
     // assets dir
     std::fs::create_dir_all(target.join("assets"))?;
 
@@ -148,6 +156,7 @@ mod tests {
         assert!(target.join("pages/about.md").exists());
         assert!(target.join("pages/about/team.md").exists());
         assert!(target.join("themes/default/theme.json").exists());
+        assert!(target.join("themes/README.md").exists());
         assert!(target.join("themes/default/templates/index.html").exists());
         assert!(target.join("themes/default/assets/fonts/Inter-Regular.woff2").exists());
         assert!(target.join("themes/default/assets/fonts/Inter-SemiBold.woff2").exists());

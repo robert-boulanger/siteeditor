@@ -31,6 +31,7 @@ theme-contract.workspace = true
 sitebuilder.workspace = true
 deploy-contract.workspace = true
 deploy-sftp.workspace = true
+deploy-ftp.workspace = true
 
 # Phase 10 — Cross-platform Credential-Storage.
 # In keyring v3 sind die OS-Backends OPT-IN: ohne diese Features
