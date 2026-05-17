@@ -1,295 +1,107 @@
-import { useEffect, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import type { AuthMethod, DeployProfile, Protocol } from "./deployTypes";
+import { useState } from "react";
+import { DeployProfilesTab } from "./DeployProfilesTab";
+import { ProjectTab, type SiteSettings } from "./ProjectTab";
 
-type Props = { onClose: () => void };
+export type SettingsTab = "project" | "deploy";
 
-const SLUG_RE = /^[a-zA-Z0-9_-]+$/;
+type Props = {
+  onClose: () => void;
+  initialTab?: SettingsTab;
+  onProjectSaved?: (s: SiteSettings) => void;
+};
 
-function emptyProfile(): DeployProfile {
-  return {
-    name: "",
-    protocol: "sftp",
-    host: "",
-    port: 22,
-    auth: { kind: "password", user: "" },
-    remote_path: "",
-    branch: null,
-    prefer_diff: true,
-  };
-}
-
-/** Defaults beim Protocol-Wechsel, damit der Editor nicht in inkonsistenten
- *  Zuständen hängt (z.B. SFTP-Profil mit GithubToken-Auth). */
-function applyProtocolDefaults(p: DeployProfile, protocol: Protocol): DeployProfile {
-  if (protocol === "sftp") {
-    return {
-      ...p,
-      protocol,
-      port: p.port === 443 ? 22 : p.port,
-      auth: p.auth.kind === "github_token" ? { kind: "password", user: "" } : p.auth,
-      branch: null,
-    };
-  }
-  return {
-    ...p,
-    protocol,
-    port: 443,
-    auth: { kind: "github_token", user: p.auth.kind === "github_token" ? p.auth.user : "" },
-    host: p.host || "github.com",
-    branch: p.branch ?? "gh-pages",
-  };
-}
-
-export function SettingsModal({ onClose }: Props) {
-  const [profiles, setProfiles] = useState<DeployProfile[]>([]);
-  const [selected, setSelected] = useState<string | null>(null);
-  const [draft, setDraft] = useState<DeployProfile | null>(null);
-  const [secret, setSecret] = useState(""); // nur für die nächste Speicher-Aktion
-  const [hasSecret, setHasSecret] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+export function SettingsModal({ onClose, initialTab = "project", onProjectSaved }: Props) {
+  const [tab, setTab] = useState<SettingsTab>(initialTab);
   const [busy, setBusy] = useState(false);
+  const [projectDirty, setProjectDirty] = useState(false);
+  const [deployDirty, setDeployDirty] = useState(false);
 
-  async function reload(selectName?: string | null) {
-    const list = await invoke<DeployProfile[]>("deploy_list_profiles");
-    setProfiles(list);
-    if (selectName) {
-      const p = list.find((p) => p.name === selectName) ?? null;
-      setSelected(p?.name ?? null);
-      setDraft(p ? structuredClone(p) : null);
-      setSecret("");
-      if (p) {
-        try {
-          const has = await invoke<boolean>("deploy_has_secret", { name: p.name });
-          setHasSecret(has);
-        } catch { setHasSecret(false); }
-      } else setHasSecret(false);
+  function switchTab(next: SettingsTab) {
+    if (next === tab) return;
+    const leaving = tab === "project" ? projectDirty : deployDirty;
+    if (leaving) {
+      const ok = confirm("Ungespeicherte Änderungen verwerfen?");
+      if (!ok) return;
+      if (tab === "project") setProjectDirty(false);
+      else setDeployDirty(false);
     }
+    setTab(next);
   }
 
-  useEffect(() => { reload(null).catch((e) => setError(String(e))); }, []);
-
-  function selectProfile(name: string) {
-    const p = profiles.find((x) => x.name === name);
-    if (!p) return;
-    setSelected(name);
-    setDraft(structuredClone(p));
-    setSecret("");
-    setError(null);
-    invoke<boolean>("deploy_has_secret", { name }).then(setHasSecret).catch(() => setHasSecret(false));
-  }
-
-  function startNew() {
-    setSelected(null);
-    setDraft(emptyProfile());
-    setSecret("");
-    setHasSecret(false);
-    setError(null);
-  }
-
-  function updateDraft<K extends keyof DeployProfile>(k: K, v: DeployProfile[K]) {
-    setDraft((d) => (d ? { ...d, [k]: v } : d));
-  }
-
-  function updateAuth(next: AuthMethod) {
-    setDraft((d) => (d ? { ...d, auth: next } : d));
-  }
-
-  async function save() {
-    if (!draft) return;
-    setError(null);
-    if (!SLUG_RE.test(draft.name)) {
-      setError("Name: nur A-Z, a-z, 0-9, _ und -");
-      return;
+  function handleClose() {
+    if (busy) return;
+    if (projectDirty || deployDirty) {
+      const ok = confirm("Ungespeicherte Änderungen verwerfen und schließen?");
+      if (!ok) return;
     }
-    if (!draft.host.trim()) { setError("Host darf nicht leer sein"); return; }
-    if (!draft.remote_path.trim()) { setError("Remote-Pfad darf nicht leer sein"); return; }
-    setBusy(true);
-    try {
-      await invoke("deploy_save_profile", {
-        profile: draft,
-        secret: secret.length > 0 ? secret : null,
-      });
-      await reload(draft.name);
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function remove() {
-    if (!selected) return;
-    if (!confirm(`Profil "${selected}" inklusive Secret löschen?`)) return;
-    setBusy(true);
-    try {
-      await invoke("deploy_delete_profile", { name: selected });
-      setSelected(null);
-      setDraft(null);
-      await reload(null);
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setBusy(false);
-    }
+    onClose();
   }
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal settings-modal" onClick={(e) => e.stopPropagation()} style={{ minWidth: 580 }}>
-        <h3>Deploy-Einstellungen</h3>
+    <div className="modal-backdrop" onClick={handleClose}>
+      <div
+        className="modal settings-modal"
+        onClick={(e) => e.stopPropagation()}
+        style={{ minWidth: 620, maxHeight: "85vh", display: "flex", flexDirection: "column" }}
+      >
+        <h3>Projekt-Einstellungen</h3>
 
-        <div style={{ display: "flex", gap: "1rem", alignItems: "flex-start" }}>
-          <div style={{ width: 180, borderRight: "1px solid var(--border)", paddingRight: "0.5rem" }}>
-            <div style={{ display: "flex", gap: "0.3rem", marginBottom: "0.4rem" }}>
-              <button type="button" onClick={startNew} disabled={busy}>+ Neu</button>
-              <button type="button" onClick={remove} disabled={busy || !selected}>Löschen</button>
-            </div>
-            {profiles.length === 0 && <p className="muted small">Keine Profile.</p>}
-            <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
-              {profiles.map((p) => (
-                <li key={p.name}>
-                  <button
-                    type="button"
-                    onClick={() => selectProfile(p.name)}
-                    style={{
-                      width: "100%", textAlign: "left", padding: "0.3rem 0.4rem",
-                      background: selected === p.name ? "var(--accent-soft, #eef)" : "transparent",
-                      border: "none", cursor: "pointer", borderRadius: 3,
-                    }}
-                  >
-                    <strong>{p.name}</strong>
-                    <div className="muted small">{p.protocol === "sftp" ? "SFTP" : "GitHub Pages"}</div>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </div>
+        <div role="tablist" style={{ display: "flex", gap: "0.25rem", borderBottom: "1px solid var(--border)", marginBottom: "0.6rem" }}>
+          <TabButton active={tab === "project"} dirty={projectDirty} onClick={() => switchTab("project")}>
+            Projekt
+          </TabButton>
+          <TabButton active={tab === "deploy"} dirty={deployDirty} onClick={() => switchTab("deploy")}>
+            Deploy-Profile
+          </TabButton>
+        </div>
 
-          <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: "0.5rem" }}>
-            {!draft ? (
-              <p className="muted">Profil links wählen oder <em>Neu</em>.</p>
-            ) : (
-              <>
-                <label>
-                  <span>Name (Slug)</span>
-                  <input value={draft.name} onChange={(e) => updateDraft("name", e.currentTarget.value)} disabled={!!selected} />
-                </label>
-                <label>
-                  <span>Protokoll</span>
-                  <select
-                    value={draft.protocol}
-                    onChange={(e) => setDraft(applyProtocolDefaults(draft, e.currentTarget.value as Protocol))}
-                  >
-                    <option value="sftp">SFTP</option>
-                    <option value="github_pages">GitHub Pages</option>
-                  </select>
-                </label>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 100px", gap: "0.5rem" }}>
-                  <label>
-                    <span>Host</span>
-                    <input value={draft.host} onChange={(e) => updateDraft("host", e.currentTarget.value)} />
-                  </label>
-                  <label>
-                    <span>Port</span>
-                    <input type="number" value={draft.port} onChange={(e) => updateDraft("port", Number(e.currentTarget.value))} />
-                  </label>
-                </div>
-
-                {draft.protocol === "sftp" && (
-                  <>
-                    <label>
-                      <span>Auth</span>
-                      <select
-                        value={draft.auth.kind}
-                        onChange={(e) => {
-                          const kind = e.currentTarget.value as "password" | "ssh_key";
-                          updateAuth(kind === "password"
-                            ? { kind: "password", user: draft.auth.kind === "password" ? draft.auth.user : "" }
-                            : { kind: "ssh_key", user: "user" in draft.auth ? draft.auth.user : "", private_key_path: "" });
-                        }}
-                      >
-                        <option value="password">Passwort</option>
-                        <option value="ssh_key">SSH-Key</option>
-                      </select>
-                    </label>
-                    <label>
-                      <span>SSH-User</span>
-                      <input
-                        value={"user" in draft.auth ? draft.auth.user : ""}
-                        onChange={(e) => {
-                          if (draft.auth.kind === "password") updateAuth({ ...draft.auth, user: e.currentTarget.value });
-                          else if (draft.auth.kind === "ssh_key") updateAuth({ ...draft.auth, user: e.currentTarget.value });
-                        }}
-                      />
-                    </label>
-                    {draft.auth.kind === "ssh_key" && (
-                      <label>
-                        <span>Private-Key-Pfad</span>
-                        <input
-                          value={draft.auth.private_key_path}
-                          onChange={(e) => updateAuth({ ...draft.auth, private_key_path: e.currentTarget.value } as AuthMethod)}
-                          placeholder="/Users/du/.ssh/id_ed25519"
-                        />
-                      </label>
-                    )}
-                    <label>
-                      <span>Remote-Pfad (absolut)</span>
-                      <input value={draft.remote_path} onChange={(e) => updateDraft("remote_path", e.currentTarget.value)} placeholder="/var/www/site" />
-                    </label>
-                  </>
-                )}
-
-                {draft.protocol === "github_pages" && (
-                  <>
-                    <label>
-                      <span>GitHub-User</span>
-                      <input
-                        value={draft.auth.kind === "github_token" ? draft.auth.user : ""}
-                        onChange={(e) => updateAuth({ kind: "github_token", user: e.currentTarget.value })}
-                      />
-                    </label>
-                    <label>
-                      <span>Repository (owner/repo)</span>
-                      <input value={draft.remote_path} onChange={(e) => updateDraft("remote_path", e.currentTarget.value)} placeholder="octocat/mysite" />
-                    </label>
-                    <label>
-                      <span>Branch</span>
-                      <input value={draft.branch ?? ""} onChange={(e) => updateDraft("branch", e.currentTarget.value || null)} placeholder="gh-pages" />
-                    </label>
-                  </>
-                )}
-
-                <label className="row">
-                  <input type="checkbox" checked={draft.prefer_diff !== false} onChange={(e) => updateDraft("prefer_diff", e.currentTarget.checked)} />
-                  <span>Diff-Upload bevorzugen (Fallback Full)</span>
-                </label>
-
-                <fieldset style={{ border: "1px dashed var(--border)", padding: "0.5rem", borderRadius: 4 }}>
-                  <legend>
-                    Secret {hasSecret ? <span className="muted small">— im Keystore hinterlegt</span> : <span className="muted small">— noch nicht gesetzt</span>}
-                  </legend>
-                  <input
-                    type="password"
-                    value={secret}
-                    onChange={(e) => setSecret(e.currentTarget.value)}
-                    placeholder={draft.auth.kind === "github_token" ? "GitHub PAT" : draft.auth.kind === "ssh_key" ? "Key-Passphrase (optional)" : "Passwort"}
-                    style={{ width: "100%" }}
-                  />
-                  <div className="muted small">Wird beim Speichern verschlüsselt im OS-Keystore abgelegt. Leer lassen, um den bestehenden Eintrag zu behalten.</div>
-                </fieldset>
-              </>
-            )}
-
-            {error && <div className="modal-error" style={{ color: "var(--danger, #c00)" }}>{error}</div>}
-          </div>
+        <div style={{ flex: 1, overflow: "auto" }}>
+          {tab === "project" && (
+            <ProjectTab
+              busy={busy}
+              setBusy={setBusy}
+              onSaved={onProjectSaved}
+              onDirtyChange={setProjectDirty}
+            />
+          )}
+          {tab === "deploy" && (
+            <DeployProfilesTab
+              busy={busy}
+              setBusy={setBusy}
+              onDirtyChange={setDeployDirty}
+            />
+          )}
         </div>
 
         <div className="modal-actions">
-          <button type="button" onClick={onClose} disabled={busy}>Schließen</button>
-          <button type="button" onClick={save} disabled={busy || !draft}>Speichern</button>
+          <button type="button" onClick={handleClose} disabled={busy}>Schließen</button>
         </div>
       </div>
     </div>
+  );
+}
+
+function TabButton({
+  active, dirty, onClick, children,
+}: { active: boolean; dirty: boolean; onClick: () => void; children: React.ReactNode }) {
+  return (
+    <button
+      type="button"
+      role="tab"
+      aria-selected={active}
+      onClick={onClick}
+      style={{
+        background: "none",
+        border: "none",
+        borderBottom: active ? "2px solid var(--accent, #36c)" : "2px solid transparent",
+        padding: "0.4rem 0.8rem",
+        cursor: "pointer",
+        fontWeight: active ? 600 : 400,
+        marginBottom: -1,
+      }}
+    >
+      {children}
+      {dirty && <span style={{ marginLeft: 4, color: "var(--accent, #36c)" }}>•</span>}
+    </button>
   );
 }

@@ -16,12 +16,11 @@ pub fn bootstrap_example_project(target: &Utf8Path) -> Result<()> {
     // site.json
     let site_json = r#"{
   "schema_version": "0.2",
-  "title": "Meine Beispielseite",
-  "description": "Smoke-Test-Projekt für siteeditor.",
+  "title": "Neues Projekt",
+  "description": "",
   "base_url": "https://example.com",
   "active_theme": "default",
   "language": "de",
-  "menu_order": ["index", "about"],
   "css_var_overrides": {}
 }
 "#;

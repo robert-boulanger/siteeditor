@@ -39,8 +39,6 @@ pub struct SiteManifest {
     #[serde(default)]
     pub language: Option<String>,
     #[serde(default)]
-    pub menu_order: Vec<String>,
-    #[serde(default)]
     pub css_var_overrides: BTreeMap<String, String>,
     /// Phase 10: Deployment-Profile (Staging/Prod/…). Credentials liegen
     /// NICHT hier, sondern im OS-Keystore (Service-Name siehe
@@ -79,6 +77,22 @@ pub struct MenuConfig {
     pub show: bool,
     #[serde(default)]
     pub order: Option<i32>,
+}
+
+/// Editierbare site.json-Felder für den Projekt-Settings-Dialog.
+/// Bewusst eine eigene Struct (nicht der ganze `SiteManifest`), damit Felder
+/// wie `deploy_profiles`, `css_var_overrides` oder `menu_order` nicht
+/// versehentlich aus dem UI heraus überschrieben werden — die haben eigene
+/// Pfade.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct SiteSettingsPatch {
+    pub title: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    pub base_url: String,
+    pub active_theme: String,
+    #[serde(default)]
+    pub language: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -241,6 +255,49 @@ impl Project {
         }
         let mut new_manifest = self.manifest.clone();
         new_manifest.active_theme = slug.to_string();
+        self.persist_manifest(new_manifest)
+    }
+
+    /// Schreibt die im Settings-Dialog editierbaren site.json-Felder
+    /// atomar. Validiert vorab — bei Validierungsfehler bleibt site.json
+    /// unverändert.
+    pub fn save_site_settings(&mut self, patch: SiteSettingsPatch) -> Result<(), ProjectError> {
+        let title = patch.title.trim();
+        if title.is_empty() {
+            return Err(ProjectError::InvalidSiteJson("title darf nicht leer sein".into()));
+        }
+        let base_url = patch.base_url.trim();
+        if !is_valid_base_url(base_url) {
+            return Err(ProjectError::InvalidSiteJson(
+                "base_url muss mit http:// oder https:// beginnen und einen Host haben".into(),
+            ));
+        }
+        if !is_safe_slug(&patch.active_theme) {
+            return Err(ProjectError::InvalidSiteJson(
+                "active_theme enthält unerlaubte Zeichen".into(),
+            ));
+        }
+        if !self.themes_dir().join(&patch.active_theme).join("theme.json").exists() {
+            return Err(ProjectError::InvalidSiteJson(format!(
+                "active_theme \"{}\" ist nicht installiert",
+                patch.active_theme
+            )));
+        }
+        let description = patch.description.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(String::from);
+        let language = patch.language.as_deref().map(str::trim).filter(|s| !s.is_empty());
+        if let Some(lang) = language {
+            if !is_valid_language_tag(lang) {
+                return Err(ProjectError::InvalidSiteJson(format!(
+                    "language \"{lang}\" ist kein gültiger BCP-47-Tag"
+                )));
+            }
+        }
+        let mut new_manifest = self.manifest.clone();
+        new_manifest.title = title.to_string();
+        new_manifest.description = description;
+        new_manifest.base_url = base_url.to_string();
+        new_manifest.active_theme = patch.active_theme;
+        new_manifest.language = language.map(String::from);
         self.persist_manifest(new_manifest)
     }
 
@@ -747,6 +804,40 @@ fn is_safe_slug(slug: &str) -> bool {
     }
     for seg in slug.split('/') {
         if seg.is_empty() || seg == "." || seg == ".." || seg.starts_with('.') {
+            return false;
+        }
+    }
+    true
+}
+
+/// Sehr lockerer Check für `site.json::base_url`. Wir wollen nur
+/// offensichtlich kaputte Eingaben abfangen (leer, kein Schema, `file://`,
+/// etc.) — die exakte URL-Validierung ist Aufgabe des Browsers beim
+/// Aufruf. Akzeptiert ein optionales Trailing-Slash.
+fn is_valid_base_url(s: &str) -> bool {
+    let lower = s.to_ascii_lowercase();
+    let rest = if let Some(r) = lower.strip_prefix("https://") {
+        r
+    } else if let Some(r) = lower.strip_prefix("http://") {
+        r
+    } else {
+        return false;
+    };
+    let host = rest.split(['/', '?', '#']).next().unwrap_or("");
+    // Host darf kein User-Info, kein Whitespace; mindestens ein Zeichen.
+    !host.is_empty() && !host.contains(|c: char| c.is_whitespace() || c == '@')
+}
+
+/// Lockerer BCP-47-Check: Sprachprimärtag (2–3 Buchstaben), optional
+/// gefolgt von Subtags (Bindestrich-getrennt, alphanumerisch 2–8).
+fn is_valid_language_tag(s: &str) -> bool {
+    let mut parts = s.split('-');
+    let Some(primary) = parts.next() else { return false };
+    if !(2..=3).contains(&primary.len()) || !primary.chars().all(|c| c.is_ascii_alphabetic()) {
+        return false;
+    }
+    for sub in parts {
+        if !(2..=8).contains(&sub.len()) || !sub.chars().all(|c| c.is_ascii_alphanumeric()) {
             return false;
         }
     }
@@ -1517,5 +1608,152 @@ mod tests {
 
         let err = project.delete_page("index").unwrap_err();
         assert!(matches!(err, ProjectError::InvalidPage { .. }));
+    }
+
+    // --- save_site_settings --------------------------------------------------
+
+    fn make_project_with_theme() -> (tempfile::TempDir, Project) {
+        let (tmp, project) = make_project_with_page("---\ntitle: T\n---\n");
+        let theme_dir = project.themes_dir().join("default");
+        std::fs::create_dir_all(&theme_dir).unwrap();
+        std::fs::write(theme_dir.join("theme.json"), "{}").unwrap();
+        let theme_dir2 = project.themes_dir().join("dark");
+        std::fs::create_dir_all(&theme_dir2).unwrap();
+        std::fs::write(theme_dir2.join("theme.json"), r#"{"display_name":"Dark"}"#).unwrap();
+        (tmp, project)
+    }
+
+    fn valid_patch() -> SiteSettingsPatch {
+        SiteSettingsPatch {
+            title: "Mein Projekt".into(),
+            description: Some("Beschreibung".into()),
+            base_url: "https://example.com".into(),
+            active_theme: "default".into(),
+            language: Some("de".into()),
+        }
+    }
+
+    #[test]
+    fn save_site_settings_roundtrip() {
+        let (_tmp, mut project) = make_project_with_theme();
+        project.save_site_settings(valid_patch()).unwrap();
+        let reloaded = Project::open(&project.root).unwrap();
+        assert_eq!(reloaded.manifest.title, "Mein Projekt");
+        assert_eq!(reloaded.manifest.description.as_deref(), Some("Beschreibung"));
+        assert_eq!(reloaded.manifest.base_url, "https://example.com");
+        assert_eq!(reloaded.manifest.active_theme, "default");
+        assert_eq!(reloaded.manifest.language.as_deref(), Some("de"));
+    }
+
+    #[test]
+    fn save_site_settings_trims_and_drops_empty_description() {
+        let (_tmp, mut project) = make_project_with_theme();
+        let mut p = valid_patch();
+        p.title = "  Spaced  ".into();
+        p.description = Some("   ".into());
+        project.save_site_settings(p).unwrap();
+        let reloaded = Project::open(&project.root).unwrap();
+        assert_eq!(reloaded.manifest.title, "Spaced");
+        assert!(reloaded.manifest.description.is_none());
+    }
+
+    #[test]
+    fn save_site_settings_rejects_empty_title() {
+        let (_tmp, mut project) = make_project_with_theme();
+        let mut p = valid_patch();
+        p.title = "   ".into();
+        let err = project.save_site_settings(p).unwrap_err();
+        assert!(matches!(err, ProjectError::InvalidSiteJson(_)));
+        // Datei unverändert
+        let reloaded = Project::open(&project.root).unwrap();
+        assert_eq!(reloaded.manifest.title, "T");
+    }
+
+    #[test]
+    fn save_site_settings_rejects_bad_base_url() {
+        let (_tmp, mut project) = make_project_with_theme();
+        for bad in ["", "example.com", "ftp://x", "file:///etc", "http://", "http://a b/"] {
+            let mut p = valid_patch();
+            p.base_url = bad.into();
+            assert!(
+                matches!(project.save_site_settings(p).unwrap_err(), ProjectError::InvalidSiteJson(_)),
+                "should reject base_url {bad:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn save_site_settings_rejects_missing_theme() {
+        let (_tmp, mut project) = make_project_with_theme();
+        let mut p = valid_patch();
+        p.active_theme = "ghost".into();
+        assert!(matches!(
+            project.save_site_settings(p).unwrap_err(),
+            ProjectError::InvalidSiteJson(_)
+        ));
+    }
+
+    #[test]
+    fn save_site_settings_rejects_unsafe_theme_slug() {
+        let (_tmp, mut project) = make_project_with_theme();
+        let mut p = valid_patch();
+        p.active_theme = "../etc".into();
+        assert!(matches!(
+            project.save_site_settings(p).unwrap_err(),
+            ProjectError::InvalidSiteJson(_)
+        ));
+    }
+
+    #[test]
+    fn save_site_settings_rejects_bad_language() {
+        let (_tmp, mut project) = make_project_with_theme();
+        for bad in ["x", "1234", "de_DE", "de-", "de--DE"] {
+            let mut p = valid_patch();
+            p.language = Some(bad.into());
+            assert!(
+                matches!(project.save_site_settings(p).unwrap_err(), ProjectError::InvalidSiteJson(_)),
+                "should reject language {bad:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn save_site_settings_accepts_subtags() {
+        let (_tmp, mut project) = make_project_with_theme();
+        for ok in ["en", "de", "de-DE", "zh-Hant-TW", "en-US"] {
+            let mut p = valid_patch();
+            p.language = Some(ok.into());
+            project.save_site_settings(p).unwrap_or_else(|e| panic!("{ok}: {e}"));
+        }
+    }
+
+    #[test]
+    fn save_site_settings_accepts_missing_language() {
+        let (_tmp, mut project) = make_project_with_theme();
+        let mut p = valid_patch();
+        p.language = None;
+        project.save_site_settings(p).unwrap();
+        let reloaded = Project::open(&project.root).unwrap();
+        assert!(reloaded.manifest.language.is_none());
+    }
+
+    #[test]
+    fn save_site_settings_is_atomic_no_tmp_left() {
+        let (_tmp, mut project) = make_project_with_theme();
+        project.save_site_settings(valid_patch()).unwrap();
+        let leftovers: Vec<_> = std::fs::read_dir(&project.root)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_string_lossy().starts_with('.') && e.file_name().to_string_lossy().contains("site.json"))
+            .collect();
+        assert!(leftovers.is_empty(), "tmp left over: {leftovers:?}");
+    }
+
+    #[test]
+    fn is_valid_base_url_accepts_common_forms() {
+        assert!(is_valid_base_url("https://example.com"));
+        assert!(is_valid_base_url("https://example.com/"));
+        assert!(is_valid_base_url("http://localhost:8080"));
+        assert!(is_valid_base_url("https://sub.example.com/path"));
     }
 }

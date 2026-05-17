@@ -110,6 +110,7 @@ type Store = {
   listThemes: () => Promise<ThemeInfo[]>;
   setActiveTheme: (slug: string) => Promise<void>;
   setStatus: (s: string) => void;
+  patchProject: (patch: Partial<ProjectState>) => void;
 };
 
 export const useStore = create<Store>((set, get) => ({
@@ -119,6 +120,10 @@ export const useStore = create<Store>((set, get) => ({
   busy: false,
 
   setStatus: (s) => set({ status: s }),
+
+  patchProject: (patch) => set((state) => ({
+    project: state.project ? { ...state.project, ...patch } : state.project,
+  })),
 
   bootstrap: async (path: string) => {
     set({ busy: true, status: `Erzeuge Beispielprojekt in ${path} …` });

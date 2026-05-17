@@ -91,7 +91,7 @@ pub fn build_site(project: &Project) -> Result<BuildReport> {
 
     let pages = project.list_pages().context("list pages")?;
 
-    let menu_items = build_menu(&pages, &project.manifest.menu_order);
+    let menu_items = build_menu(&pages);
 
     let site_ctx = SiteCtx {
         title: &project.manifest.title,
@@ -170,13 +170,13 @@ fn load_theme_manifest(theme_dir: &Utf8PathBuf) -> Result<theme_contract::ThemeM
 /// Baut einen Menü-Baum aus den (flach gelisteten) Pages. Eltern-Beziehung
 /// wird aus dem Slug-Pfad abgeleitet: `about/team` ist Kind von `about`.
 ///
-/// `site.menu_order` ordnet ausschließlich die **Top-Level-Items**. Kinder
-/// werden pro Parent nach `menu.order` (dann nach Titel) sortiert.
+/// Sortierung — alle Ebenen einheitlich — nach `frontmatter.menu.order`
+/// (Fallback 1000) und dann alphabetisch nach Titel.
 ///
 /// Wenn die Parent-Page fehlt oder im Menü ausgeblendet ist, hängt der Knoten
 /// trotzdem an seinem nächsten *vorhandenen* Vorfahren im Menü; existiert
 /// keiner, wird er auf Root-Ebene gehängt (kein Eintrag wird unsichtbar).
-fn build_menu(pages: &[PageDoc], order: &[String]) -> Vec<MenuItem> {
+fn build_menu(pages: &[PageDoc]) -> Vec<MenuItem> {
     let visible: Vec<&PageDoc> = pages
         .iter()
         .filter(|p| p.frontmatter.visible && p.frontmatter.menu.show)
@@ -243,19 +243,7 @@ fn build_menu(pages: &[PageDoc], order: &[String]) -> Vec<MenuItem> {
         sort_children(r);
     }
 
-    // Root sortieren: explizite menu_order zuerst, Rest nach order/title.
-    let order_index: BTreeMap<&String, usize> =
-        order.iter().enumerate().map(|(i, s)| (s, i)).collect();
-    roots.sort_by(|a, b| {
-        let ai = order_index.get(&a.slug);
-        let bi = order_index.get(&b.slug);
-        match (ai, bi) {
-            (Some(i), Some(j)) => i.cmp(j),
-            (Some(_), None) => std::cmp::Ordering::Less,
-            (None, Some(_)) => std::cmp::Ordering::Greater,
-            (None, None) => a.order.cmp(&b.order).then_with(|| a.title.cmp(&b.title)),
-        }
-    });
+    roots.sort_by(|a, b| a.order.cmp(&b.order).then_with(|| a.title.cmp(&b.title)));
     roots
 }
 
@@ -426,23 +414,23 @@ mod tests {
             page("b", "B", false, None, true),     // menu.show=false → raus
             page("c", "C", true, Some(2), false),  // visible=false → raus
         ];
-        let items = build_menu(&pages, &[]);
+        let items = build_menu(&pages);
         let slugs: Vec<_> = items.iter().map(|i| i.slug.as_str()).collect();
         assert_eq!(slugs, vec!["a"]);
     }
 
     #[test]
-    fn build_menu_honours_menu_order() {
+    fn build_menu_root_sortiert_nach_menu_order_dann_titel() {
+        // Root-Sortierung folgt jetzt einheitlich der Regel
+        // "frontmatter.menu.order, dann Titel" — wie für Kinder auch.
         let pages = vec![
             page("about", "About", true, Some(10), true),
             page("index", "Home", true, Some(20), true),
             page("contact", "Contact", true, Some(5), true),
         ];
-        let order = vec!["index".to_string(), "about".to_string()];
-        let items = build_menu(&pages, &order);
+        let items = build_menu(&pages);
         let slugs: Vec<_> = items.iter().map(|i| i.slug.as_str()).collect();
-        // index + about kommen wie in menu_order zuerst, contact fällt hinten an
-        assert_eq!(slugs, vec!["index", "about", "contact"]);
+        assert_eq!(slugs, vec!["contact", "about", "index"]);
     }
 
     #[test]
@@ -452,7 +440,7 @@ mod tests {
             page("alpha", "Alpha", true, Some(5), true),
             page("beta", "Beta", true, Some(1), true),
         ];
-        let items = build_menu(&pages, &[]);
+        let items = build_menu(&pages);
         let slugs: Vec<_> = items.iter().map(|i| i.slug.as_str()).collect();
         // beta(order=1) zuerst, dann alpha(order=5) vor zeta(order=5) alphabetisch
         assert_eq!(slugs, vec!["beta", "alpha", "zeta"]);
@@ -466,7 +454,7 @@ mod tests {
             page("about/contact", "Contact", true, Some(1), true),
             page("index", "Home", true, Some(1), true),
         ];
-        let items = build_menu(&pages, &[]);
+        let items = build_menu(&pages);
         let root_slugs: Vec<_> = items.iter().map(|i| i.slug.as_str()).collect();
         assert_eq!(root_slugs, vec!["index", "about"]);
 
@@ -484,7 +472,7 @@ mod tests {
             page("about", "About", true, None, false),       // im Menü nicht sichtbar
             page("about/team", "Team", true, None, true),
         ];
-        let items = build_menu(&pages, &[]);
+        let items = build_menu(&pages);
         let root_slugs: Vec<_> = items.iter().map(|i| i.slug.as_str()).collect();
         assert_eq!(root_slugs, vec!["about/team"]);
     }
@@ -496,7 +484,7 @@ mod tests {
             page("a/b", "B", true, Some(1), true),
             page("a/b/c", "C", true, Some(1), true),
         ];
-        let items = build_menu(&pages, &[]);
+        let items = build_menu(&pages);
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].slug, "a");
         assert_eq!(items[0].children.len(), 1);
@@ -511,7 +499,7 @@ mod tests {
             page("a", "A", true, None, true),
             page("b", "B", true, Some(1), true),
         ];
-        let items = build_menu(&pages, &[]);
+        let items = build_menu(&pages);
         let slugs: Vec<_> = items.iter().map(|i| i.slug.as_str()).collect();
         assert_eq!(slugs, vec!["b", "a"]);
     }

@@ -3,6 +3,7 @@ import { useStore } from "./store";
 import type { Block, PageFrontmatter, ThemeInfo } from "./store";
 import { open as openDialog, save as saveDialog, ask } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { Plus, FolderOpen, FolderPlus, Save, Hammer, UploadCloud, Settings } from "lucide-react";
 import { BlockList } from "./components/blocks/BlockList";
 import { NewPageDialog } from "./components/NewPageDialog";
@@ -21,6 +22,7 @@ function App() {
     createPage, renamePage, deletePage,
     listThemes, setActiveTheme,
     movePage, setFavorite,
+    patchProject,
   } = useStore();
 
   const [draftFm, setDraftFm] = useState<PageFrontmatter | null>(null);
@@ -28,7 +30,7 @@ function App() {
   const [renameSlug, setRenameSlug] = useState<string | null>(null);
   const [themes, setThemes] = useState<ThemeInfo[]>([]);
   const [cssEditorOpen, setCssEditorOpen] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState<null | "project" | "deploy">(null);
   const [deployOpen, setDeployOpen] = useState(false);
 
   useEffect(() => {
@@ -40,6 +42,23 @@ function App() {
     if (!project) { setThemes([]); return; }
     listThemes().then(setThemes).catch(() => setThemes([]));
   }, [project?.root, listThemes]);
+
+  useEffect(() => {
+    let off: UnlistenFn | null = null;
+    listen<string>("menu", (e) => {
+      switch (e.payload) {
+        case "settings": setSettingsOpen("project"); break;
+        case "new":      pickBootstrapTarget(); break;
+        case "open":     pickProjectFolder(); break;
+        case "save":     handleSave(); break;
+        case "deploy":   if (project) setDeployOpen(true); break;
+        case "build":    build().catch(() => {}); break;
+        case "preview":  buildAndOpen(); break;
+      }
+    }).then((u) => { off = u; });
+    return () => { if (off) off(); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [project, currentPage, draftFm]);
 
   async function handleThemeChange(slug: string) {
     if (!project || slug === project.active_theme) return;
@@ -146,7 +165,6 @@ function App() {
   return (
     <div className="app-shell">
       <header className="app-header">
-        <h1>siteeditor</h1>
         <div className="actions">
           <button
             className="icon-btn"
@@ -198,10 +216,10 @@ function App() {
           </button>
           <button
             className="icon-btn"
-            onClick={() => setSettingsOpen(true)}
+            onClick={() => setSettingsOpen("project")}
             disabled={busy || !project}
-            title="Einstellungen (Deploy-Profile…)"
-            aria-label="Einstellungen"
+            title="Projekt-Einstellungen"
+            aria-label="Projekt-Einstellungen"
           >
             <Settings size={18} />
           </button>
@@ -365,7 +383,14 @@ function App() {
       )}
 
       {settingsOpen && project && (
-        <SettingsModal onClose={() => setSettingsOpen(false)} />
+        <SettingsModal
+          onClose={() => setSettingsOpen(null)}
+          initialTab={settingsOpen}
+          onProjectSaved={(s) => {
+            patchProject({ title: s.title, active_theme: s.active_theme });
+            useStore.getState().setStatus(`Projekt: ${s.title}`);
+          }}
+        />
       )}
 
       {deployOpen && project && (

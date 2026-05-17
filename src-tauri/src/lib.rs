@@ -4,10 +4,11 @@ mod keystore;
 mod preview;
 
 use camino::Utf8PathBuf;
-use projectfs::{AssetInfo, PageFrontmatter, Project, ThemeInfo};
+use projectfs::{AssetInfo, PageFrontmatter, Project, SiteSettingsPatch, ThemeInfo};
 use serde::{Deserialize, Serialize};
 use std::sync::{Mutex, OnceLock};
-use tauri::Manager;
+use tauri::menu::{MenuBuilder, MenuItemBuilder, PredefinedMenuItem, SubmenuBuilder};
+use tauri::{Emitter, Manager};
 
 #[derive(Default)]
 struct AppState {
@@ -283,6 +284,47 @@ fn move_page(
     list_page_summaries(project)
 }
 
+#[derive(Serialize)]
+struct SiteSettings {
+    title: String,
+    description: Option<String>,
+    base_url: String,
+    active_theme: String,
+    language: Option<String>,
+}
+
+#[tauri::command]
+fn load_site_settings(state: tauri::State<'_, AppState>) -> Result<SiteSettings, String> {
+    let guard = state.project.lock().unwrap();
+    let project = guard.as_ref().ok_or_else(|| "no project open".to_string())?;
+    let m = &project.manifest;
+    Ok(SiteSettings {
+        title: m.title.clone(),
+        description: m.description.clone(),
+        base_url: m.base_url.clone(),
+        active_theme: m.active_theme.clone(),
+        language: m.language.clone(),
+    })
+}
+
+#[tauri::command]
+fn save_site_settings(
+    state: tauri::State<'_, AppState>,
+    patch: SiteSettingsPatch,
+) -> Result<SiteSettings, String> {
+    let mut guard = state.project.lock().unwrap();
+    let project = guard.as_mut().ok_or_else(|| "no project open".to_string())?;
+    project.save_site_settings(patch).map_err(to_str_err)?;
+    let m = &project.manifest;
+    Ok(SiteSettings {
+        title: m.title.clone(),
+        description: m.description.clone(),
+        base_url: m.base_url.clone(),
+        active_theme: m.active_theme.clone(),
+        language: m.language.clone(),
+    })
+}
+
 #[tauri::command]
 fn list_themes(state: tauri::State<'_, AppState>) -> Result<Vec<ThemeInfo>, String> {
     let guard = state.project.lock().unwrap();
@@ -359,6 +401,73 @@ fn open_in_browser(path: String) -> Result<(), String> {
     }
 }
 
+fn install_menu(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> {
+    // App-Submenü (auf macOS das erste, mit Standard-Konventionen). Auf
+    // anderen Plattformen erscheint es als erstes Submenü mit demselben Titel.
+    let settings = MenuItemBuilder::with_id("settings", "Einstellungen…")
+        .accelerator("CmdOrCtrl+,")
+        .build(app)?;
+    let about = PredefinedMenuItem::about(app, None, None)?;
+    let quit = PredefinedMenuItem::quit(app, None)?;
+    let app_submenu = SubmenuBuilder::new(app, "siteeditor")
+        .item(&about)
+        .separator()
+        .item(&settings)
+        .separator()
+        .item(&PredefinedMenuItem::hide(app, None)?)
+        .item(&PredefinedMenuItem::hide_others(app, None)?)
+        .item(&PredefinedMenuItem::show_all(app, None)?)
+        .separator()
+        .item(&quit)
+        .build()?;
+
+    let new_proj = MenuItemBuilder::with_id("new", "Neues Beispielprojekt…")
+        .accelerator("CmdOrCtrl+N")
+        .build(app)?;
+    let open_proj = MenuItemBuilder::with_id("open", "Projekt öffnen…")
+        .accelerator("CmdOrCtrl+O")
+        .build(app)?;
+    let save = MenuItemBuilder::with_id("save", "Speichern")
+        .accelerator("CmdOrCtrl+S")
+        .build(app)?;
+    let deploy = MenuItemBuilder::with_id("deploy", "Deploy…")
+        .accelerator("CmdOrCtrl+D")
+        .build(app)?;
+    let file_submenu = SubmenuBuilder::new(app, "Datei")
+        .item(&new_proj)
+        .item(&open_proj)
+        .separator()
+        .item(&save)
+        .separator()
+        .item(&deploy)
+        .build()?;
+
+    let build_item = MenuItemBuilder::with_id("build", "Build")
+        .accelerator("CmdOrCtrl+B")
+        .build(app)?;
+    let preview_item = MenuItemBuilder::with_id("preview", "Build & Vorschau")
+        .accelerator("CmdOrCtrl+Shift+B")
+        .build(app)?;
+    let view_submenu = SubmenuBuilder::new(app, "Ansicht")
+        .item(&build_item)
+        .item(&preview_item)
+        .build()?;
+
+    let menu = MenuBuilder::new(app)
+        .item(&app_submenu)
+        .item(&file_submenu)
+        .item(&view_submenu)
+        .build()?;
+    app.set_menu(menu)?;
+
+    app.on_menu_event(|app, event| {
+        let id = event.id().0.as_str().to_string();
+        let _ = app.emit("menu", id);
+    });
+
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -375,6 +484,7 @@ pub fn run() {
                 .map_err(|e| format!("preview server: {e}"))?;
             let _ = port_slot.set(port);
             eprintln!("preview server: http://127.0.0.1:{port}");
+            install_menu(app.handle())?;
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -393,6 +503,8 @@ pub fn run() {
             delete_asset,
             read_asset_data_url,
             list_themes,
+            load_site_settings,
+            save_site_settings,
             set_active_theme,
             read_theme_css,
             write_theme_css,
